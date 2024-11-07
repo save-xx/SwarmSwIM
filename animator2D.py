@@ -1,9 +1,8 @@
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from matplotlib.patches import Polygon, Ellipse
+from matplotlib.patches import Polygon
 import numpy as np
 import random
-import colorsys  # Import the colorsys module
 
 THRESHOLD = 300
 

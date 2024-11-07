@@ -61,19 +61,19 @@ class CNNDetection:
             # skip self
             if other.name == agent.name: continue
             # calculate relative position, in camera setting
-            rel_pos = agent.pos-other.pos
+            rel_pos = other.pos-agent.pos
             distance = np.linalg.norm(rel_pos)
             psi_rel = np.rad2deg(np.arctan2(rel_pos[1],rel_pos[0]))%360
-            alpha = (agent.psi-psi_rel)%360
+            alpha = (psi_rel-agent.psi)%360
             if alpha>180:alpha-=360
-            beta = np.rad2deg(np.arctan2(rel_pos[2],np.linalg.norm(rel_pos[0:2])))%360
+            beta = -np.rad2deg(np.arctan2(rel_pos[2],np.linalg.norm(rel_pos[0:2])))%360
             if beta>180:beta-=360
             detection = [distance,alpha,beta]
             # apply detection 
             if self.is_detection_succesful(detection, agent):
                 # If succesful 
                 measured_detection = self.detection_uncertanties(detection,agent)
-                self.detections[agent.name][0]= {other.name: measured_detection}
+                self.detections[agent.name][0][other.name]=measured_detection
             # if not detected remove previous detection, if exist
             else: 
                 if other.name in self.detections[agent.name][0]:
@@ -82,8 +82,7 @@ class CNNDetection:
     def is_detection_succesful(self, detection, agent):
         ''' Verify is detection is invluded in the agent FoV and if it has been detected '''
         # Check if in the horizontal FoV
-        if abs(detection[1])<(agent.sensors['NNDetector']['field_of_view'][0]/2): 
-            return False
+        if abs(detection[1])>(agent.sensors['NNDetector']['field_of_view'][0]/2): return False
         # Check if in the vertical FoV
         if abs(detection[2])>(agent.sensors['NNDetector']['field_of_view'][1]/2): return False
         ## Probabilistic visibility models
