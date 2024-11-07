@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<data>
+    <sim_agent>
+    <!-- Physiscal Parameters -->
+        <!-- Dry mass, kg -->
+        <mass>4.4</mass>
+        <!-- Added Mass matrix (planar, transaltional)-->
+        <!-- Values are defined positive -->
+        <added_mass>
+            1.0  0.0
+            0.0  2.0
+        </added_mass>
+
+        <!-- Added Mass matrix (planar, transaltional)-->
+        <!-- Values are defined negative -->
+        <quadratic_damping>
+            -6.0  -0.0
+            -0.0  -12.0
+        </quadratic_damping>
+
+        <!-- OPTIONAL Linear drag damping matrix (planar, transaltional)-->
+        <!-- Values are defined negative -->
+        <linear_damping>
+            -0.1  -0.0
+            -0.0  -0.1
+        </linear_damping>
+
+        <!-- Control Parameters -->
+        <!-- "ideal", "step", "proportional", "heave" -->
+        <depth_control>step</depth_control> 
+        <step_depth>0.1</step_depth> 
+        <proportional_depth>1.0</proportional_depth>
+        <heave_limit>0.3</heave_limit>
+
+        <!-- "ideal", "step", "proportional", "yawrate" -->
+        <heading_control>step</heading_control>
+        <step_heading>30.0</step_heading> 
+        <proportional_heading>1.0</proportional_heading>
+        <yawrate_limit>60</yawrate_limit>
+
+        <!-- "ideal", "step", "local_velocity", "local_forces" -->
+        <planar_control>local_forces</planar_control>
+        <step_planar>1.0</step_planar> 
+
+        <!-- Sensors Sensibility: [bias, random standard deviation] -->
+        <e_depth>0.0 0.0</e_depth> <!-- m -->
+        <e_heave>0.0 0.0</e_heave> <!-- m/s -->
+        <e_heading>0.0 0.0</e_heading> <!-- deg -->
+        <e_yawrate>0.0 0.0</e_yawrate> <!-- deg/s -->
+        <e_position>0.0 0.0</e_position> <!-- m -->
+        <e_local_vel>0.0 0.0</e_local_vel> <!-- m/s -->
+        <clock_drift>0.0</clock_drift> <!-- PPM -->
+        
+    </sim_agent>
+
+    <!-- Add sensors to Agent -->
+    <sensors>
+    
+        <!-- Add NN Detection  -->
+        <NNDetector>
+            <!-- Time interval between each detection -->
+            <period>0.4</period>
+            <!-- Camera(s) total Field of View, Horizontal Vertical -->
+            <field_of_view> 120.0 90.0 </field_of_view>
+            <!-- Visibility model adopted -->
+            <!-- none , linear -->
+            <visibility_model>linear</visibility_model>
+            <!-- detection probability function to distrance -->
+            <points> <!-- first row: distances, second row: detection probability-->
+            0.0  0.3  0.4  2.0  5.0  6.0
+            0.0  0.0  0.95 0.95 0.6  0.0
+            </points>
+            <!-- sensor uncertanties -->
+            <e_distance>0.0 0.0</e_distance>
+            <e_alpha>0.0 0.0</e_alpha> 
+            <e_beta>0.0 0.0</e_beta>
+        </NNDetector>
+    </sensors>
+
+
+</data>

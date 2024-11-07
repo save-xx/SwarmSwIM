@@ -1,0 +1,115 @@
+<?xml version="1.0"?>
+<data>
+    <!-- Mandatory Field: Define environment characteristics -->
+    <environment_setup>
+
+        <!-- Define a constant stream of planar current -->
+        <!-- Direction North-East, value in m/s -->
+        <uniform_current> 0.0 0.0 </uniform_current>
+
+        <!-- Define random noise currents -->
+        <!-- noise current is time-dependent and agent-specific, 
+        with no correlation between agents. 
+        Parameters are: 
+            Frequency [Hz]: determines the period of each disturbance 
+            Intensity [m/s]: determines the maximal intensity of noise current -->
+        <noise_currents> 0.5 0.2 </noise_currents>
+
+        <!-- Define vorticity field current -->
+        <!-- Adds time-constant, location-dependent randomized current.
+        This method emulates large-scale field turbulence. 
+        Parameters are: 
+            Density [vortexes/100m^2]
+            Intensity [m/s]: -->
+        <vortex_currents> 0 0.0 </vortex_currents>
+
+        <!-- Define wave sinusoidal current, Global -->
+        <!-- Globally applied, sinusoidal time-dependent noise -->
+        <global_waves>
+            <!-- Add each contribution separately -->
+            <wave1>
+                <!-- Peak intensity in m/s -->
+                <amplitude> 0.0 </amplitude> 
+                <!-- Wave frequency in Hz -->
+                <frequency> 0.0 </frequency>
+                <!-- Direction of wave current [degree] -->
+                <direction> 0.0 </direction>
+                <!-- Time shift of wave normalized [0,2pi] -->
+                <shift> 0.0 </shift>
+            </wave1>
+            
+            <!-- Uncomment and define additional waves if needed
+            <wave2>
+                <amplitude> 0.0 </amplitude> 
+                <frequency> 0.0 </frequency>
+                <direction> 0.0 </direction>
+                <shift> 0.0 </shift>
+            </wave2>
+            -->
+        </global_waves>
+
+        <!-- Define space and time-dependent wave currents -->
+        <!-- Adds currents following sinusoidal disturbances, space and time-dependent.
+        Direction of wave advancement corresponds with direction of disturbance -->
+        <local_waves>
+            <!-- Add each contribution separately
+            Parameters:
+            -->
+            <wave1>
+                <!-- Peak intensity of current disturbance in m/s -->
+                <amplitude> 0.0 </amplitude> 
+                <!-- Wavelength in m -->
+                <wavelength> 0.0 </wavelength>
+                <!-- Wave advancement velocity in m/s -->
+                <wavespeed> 0.0 </wavespeed>
+                <!-- Direction of advancement of waves and direction of current contribution [degree] -->
+                <direction> 0.0 </direction>
+                <!-- Time shift of wave [0,2pi] -->
+                <shift> 0.0 </shift>
+            </wave1>
+
+            <!-- Uncomment and define additional waves if needed
+            <wave2>
+                <amplitude> 0.0 </amplitude> 
+                <wavelength> 0.0 </wavelength>
+                <wavespeed> 0.0 </wavespeed>
+                <direction> 0.0 </direction>
+                <shift> 0.0 </shift>
+            </wave2> -->
+
+        </local_waves>
+
+    </environment_setup>
+
+    <!-- Optional Field: Describe start-up agents and add them to the simulation -->
+    <agents>
+        <agent_type> 
+            <!-- reference xml describing the agent -->
+            <description>default.xml</description>
+            <!-- Name prefix -->
+            <name>A</name>
+            <state>
+                <!-- Initial state, one line for each agent -->
+                <!-- x, y, z, psi -->
+                0.0  0.0  0.0  0.0
+                2.0  0.0  0.0  0.0
+                4.0  0.0  0.0  0.0
+                <!-- Add more lines to add agents -->
+            </state>
+        </agent_type>
+
+
+        <!-- Uncomment to add different type of agents
+        <agent_type> 
+            <description>your_file.xml</description>
+            <name>B</name>
+            <state>
+                0.0  0.0  0.0  0.0
+            </state>
+        </agent_type> 
+        -->
+
+
+    </agents>
+
+</data>
