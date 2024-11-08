@@ -26,7 +26,7 @@ To Set you own simulation:
 
 
 ### minimal simulation 
-```
+```python
 from sim_class import Simulator
 time_step = 1 / 24  # Simulation time step in seconds
 
@@ -47,4 +47,3 @@ This code runs the simulator in discrete steps until the specified condition is 
 
 ### minimal animation
 The animator2D provides a simple representation of the agents on the planar position and heading of each agent. Within comutational capabilites of the hosting machine and simulation complexity, the animator will run the simulation in real-time. A code example of the minimal animation can be found in the file `example2Danimation.py`.
- 
