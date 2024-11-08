@@ -29,32 +29,31 @@ def animation_callback():
     # compute relative detection
     Detection(S)
     # Add a new agent
-    if counter==100: S.add(Agent('B1'))
+    if counter==100: S.add(Agent('B01'))
     # Remove an existing agent
     if counter==200:S.remove(S.agents[1])
 
 
     # Print data
     if not counter%24==0: return
-    print('Positions:')
+    print('--- Positions: ---')
     for agent in S.agents: print(f'{agent.name}: '+ 
                                  f'x: {agent.pos[0]:.3f}, '+
                                  f'y: {agent.pos[1]:.3f}, '+
                                  f'z: {agent.pos[2]:.3f}, '+
                                  f'psi: {agent.psi:.1f}')
 
-    print('Detections:')
-    # print (Detection.detections)
+    print('--- Detections: ---')
+    for agent in S.agents: 
+        if (len(agent.NNDetector)<=1):continue
+        print(f'{agent.name} >>')
+        for key in agent.NNDetector:
+            if key=='time_lapsed': continue
+            print(f'    {key} : ',end="") 
+            print(f'[ dist: {agent.NNDetector[key][0]:.2f} ',end="") 
+            print(f'alpha: {agent.NNDetector[key][0]:.2f} ',end="") 
+            print(f'beta: {agent.NNDetector[key][0]:.2f} ]') 
     print()
-    for agent in Detection.detections:  
-        print(f'{agent}: < ',end="")
-        for key, item in Detection.detections[agent][0].items():
-            print(f'| {key}: '+
-                  f'dist: {item[0]:.2f}, '+
-                  f'alpha: {item[1]:.1f},'+
-                  f'beta: {item[2]:.1f}',end="")
-        print(" >")
-    print("...")
 
 # MAIN
 Animation.update_plot(callback=animation_callback)

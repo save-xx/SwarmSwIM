@@ -25,7 +25,7 @@ The simulator can be directlely be used as python library to set up your own sim
 To Set you own simulation:
 
 
-### minimal simulation 
+### Minimal simulation 
 ```python
 from sim_class import Simulator
 time_step = 1 / 24  # Simulation time step in seconds
@@ -45,5 +45,5 @@ while condition:
 
 This code runs the simulator in discrete steps until the specified condition is met. Note that the simulator does not run in real time; it iterates through each time step as quickly as possible. This setup is particularly useful for post-analysis and machine learning applications, where real-time processing is not required, and fast iteration are preferrable.
 
-### minimal animation
+### Minimal animation
 The animator2D provides a simple representation of the agents on the planar position and heading of each agent. Within comutational capabilites of the hosting machine and simulation complexity, the animator will run the simulation in real-time. A code example of the minimal animation can be found in the file `example2Danimation.py`.
