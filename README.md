@@ -1,4 +1,4 @@
-### Underwater Swarm Simulator 
+# Underwater Swarm Simulator 
 This is a Python3-based simulator designed for modeling multi-robot and swarm systems. It implements a simplified motion model, with an assumed level of low level control already acting on the simulated agents rather than calculating the full-body dynamics. This approach allows the simulator to efficiently handle a large number of agents simultaneously.
 
 ## Features
@@ -25,14 +25,26 @@ The simulator can be directlely be used as python library to set up your own sim
 To Set you own simulation:
 
 
-# minimal simulation 
+### minimal simulation 
+```
 from sim_class import Simulator
-time_step = 1/24 #simulation time step in seconds
+time_step = 1 / 24  # Simulation time step in seconds
+
+# Initialize the simulator with the chosen time step
 S = Simulator(time_step)
+
+# Initialize a sensor model (e.g., CNN-based detection)
 Detection = CNNDetection()
-while(condition):
-    S.tick()
-    Detection(S)
 
-This will run the sumulator until the condition is met. Note that the simulator will not run in real time, but will iterate each step within minimum time. This approach is of interest for post-analysis and ML. 
+# Run the simulation until a specific condition is met
+while condition:
+    S.tick()         # Progress the simulation by one time step
+    Detection(S)     # Apply detection on the current state of the simulator
 
+```
+
+This code runs the simulator in discrete steps until the specified condition is met. Note that the simulator does not run in real time; it iterates through each time step as quickly as possible. This setup is particularly useful for post-analysis and machine learning applications, where real-time processing is not required, and fast iteration are preferrable.
+
+### minimal animation
+The animator2D provides a simple representation of the agents on the planar position and heading of each agent. Within comutational capabilites of the hosting machine and simulation complexity, the animator will run the simulation in real-time. A code example of the minimal animation can be found in the file `example2Danimation.py`.
+ 
