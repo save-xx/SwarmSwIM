@@ -1,12 +1,26 @@
 ### Underwater Swarm Simulator 
 This is a Python3-based simulator designed for modeling multi-robot and swarm systems. It implements a simplified motion model, with an assumed level of low level control already acting on the simulated agents rather than calculating the full-body dynamics. This approach allows the simulator to efficiently handle a large number of agents simultaneously.
 
-## Requirments
-The following python packages are required to run the simulator:
-Core use: numpy
-Animation: matplotlib
+## Features
 
-## Basic use: Implementation as Python library
+- **Efficient Swarm Simulation**: Simulate numerous agents with simplified motion models.
+- **Modular and Customizable**: Easily extendable for different agent types and behaviors.
+- **Scalability**: Optimized for handling multiple agents.
+- **Basic Visualizations**: Includes simple tools for visualizing agent positions and swarm dynamics.
+
+## Requirements
+
+The following Python packages are required to run the simulator:
+
+- **Core Functionality**: `numpy`
+- **Visualization & Animation**: `matplotlib`
+
+Install dependencies with:
+```bash
+pip install numpy matplotlib
+```
+
+## Basic Usage: Using the Simulator as a Python Library
 The simulator can be directlely be used as python library to set up your own simulator.
 To Set you own simulation:
 
