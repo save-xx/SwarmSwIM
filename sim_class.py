@@ -158,7 +158,7 @@ class Simulator():
         print(dists)
         return np.interp(-delay_seconds,times,dists)
 
-    def doppler(self,A,B,msg_dt=1):
+    def doppler(self,A,B,msg_dt=1.0):
         ''' return doppler shift as velocity. 
         msg_dt is the transmission time of the message
         doppler is considered measured in A - only for long range

@@ -59,7 +59,27 @@ The animator2D provides a simple representation of the agents on the planar posi
 - **time**: (float) current enlapsed time in seconds
 - **agents**: (list of Agents) list of the actively simulated agents
 - **environment**: (dictionary) Collection of all current parameters
+- **states**: (dictionary name: np.array) position of each agent in the simulation, collected by agent name as key 
 
 **Methods**
-- **add(*args)**-> None: add one or more agents to the simulation. 
+- **add (*args)**-> None: add one or more agents to the simulation. 
     - args: one or more Agent object
+- **remove (*args)**-> None: remove, if present, one or more agents to the simulation. 
+    - args: one or more Agent object in agents.
+- **tick()**-> None: move the simulation foward of the interval indicated in Dt
+- **rel_pos(Agent1,Agent2)**-> numpy.array: return the istantaneous position vector of Agent2 respect to Agent1.
+    - Agent1, Agent2: Agent objects
+- **acoustic_range(Agent1,Agent2)**-> float: return the distance vector of Agent2 respect to Agent1, considering acoustic delay. No further errors are added to the measurament.
+    - Agent1, Agent2: Agent objects
+- **doppler(Agent1,Agent2,msg_dt=1.0)**-> float: return the value of doppler velocity of Agent2 measured by agent1 on an incoming communication.No further errors are added to the measurament.
+    - Agent1, Agent2: Agent objects
+    - msg_dt: average acoustic package duration, default=1.0
+
+
+### Agent
+**Parameters**
+- **name**: (string) Unique name of the agent added. Mandatory field
+- **Dt=0.1** (float) Simulation interval in seconds. Overwritten by simulator
+- **pos** (array-like 3 elements) initial position of the agent in the world, NED coordinated. Default [0,0,0].
+- **psi0** (float) initial heading of the agent. NED coordinates. Default 0.0 (North).
+- **agent_xml** (string) Local path to the xml file describing the agent settings. Default is "default.xml"
