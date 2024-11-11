@@ -41,7 +41,7 @@ class Agent():
         self.cmd_heave = 0
         self.cmd_heading = psi0
         self.cmd_yawrate = 0
-        self.cmd_planar = pos[0:2]
+        self.cmd_planar = np.array(pos[0:2])
         self.cmd_local_vel = np.array([0,0])
         self.cmd_forces = np.array([0,0])
 
