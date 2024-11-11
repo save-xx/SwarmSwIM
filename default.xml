@@ -70,7 +70,7 @@
             0.0  0.3  0.4  2.0  5.0  6.0
             0.0  0.0  0.95 0.95 0.6  0.0
             </points>
-            <!-- sensor uncertanties -->
+            <!-- sensor uncertanties [bias, random standard deviation]-->
             <e_distance>0.0 0.0</e_distance>
             <e_alpha>0.0 0.0</e_alpha> 
             <e_beta>0.0 0.0</e_beta>
