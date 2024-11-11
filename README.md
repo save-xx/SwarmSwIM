@@ -47,3 +47,19 @@ This code runs the simulator in discrete steps until the specified condition is 
 
 ### Minimal animation
 The animator2D provides a simple representation of the agents on the planar position and heading of each agent. Within comutational capabilites of the hosting machine and simulation complexity, the animator will run the simulation in real-time. A code example of the minimal animation can be found in the file `example2Danimation.py`.
+
+## Attributes and Methods
+
+### Simulator
+**Parameters**
+- **Dt** (float) Simulation interval in seconds (mandatory)
+- **sim_xml** (string) Local path to the xml file describing the simulation settings. Default is "simulation.xml"
+
+**Attributes**
+- **time**: (float) current enlapsed time in seconds
+- **agents**: (list of Agents) list of the actively simulated agents
+- **environment**: (dictionary) Collection of all current parameters
+
+**Methods**
+- **add(*args)**-> None: add one or more agents to the simulation. 
+    - args: one or more Agent object
