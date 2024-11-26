@@ -104,3 +104,18 @@ The animator2D provides a simple representation of the agents on the planar posi
 
 **Methods**
 - **cmd_fhd(force,heading,depth)**->None: Set desired command as force (float or array-like[x,y]), heading (float), depth (float). 
+
+## Unreal Engine: Simulation [STILL EDITING]
+Two files are added to give you the possibility to simulate a 3D marine environment. Use the sample project that is shared in the 'UE5_sim' folder as a sample. 
+
+When creating your own project, keep it simple:
+- On the left sidebar, select `Games`, then `Blank`. Keep Blueprint mode!
+- After you reach the viewport, with `File` --> `New Level` --> `Empty Level` you will create a new environment
+- Switch to `Landscape mode` to create your own landscape. In the `Sculpt` section you can experiment different landscape setups.
+
+`SimAPI.py` is providing an ongoing simulation mode through HTTP Request. On the loopback address, when you request `/init_status` the environment is set up as in the `init_unreal.py` file. During simulaiton, every tick will perform a `/tick_exec` request to update the visual simulation. As a result of this, for each agent simulated, a visual feedback is returned and shown through a OpenCV (python) operation.
+
+Launch as requested here in order to avoid crashing of UE5 environment!
+- Launch the `SimAPI.py` file, that provides the link between simulation and visual representation
+- Open the UnrealEngine project. In `Plugin`-->`Python`, add the path of the startup script int `Additional Paths`and the name of the script in `Startup Scripts`. In this way, UE5 will automatically launch the `init_unreal.py` script and set up the environment on opening the project.
+- Play the simulation in Unreal Engine
