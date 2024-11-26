@@ -4,6 +4,8 @@ import os, random
 
 DIR_FILE = os.path.dirname(__file__)
 
+
+
 class Agent():
     def __init__(self, name, Dt=0.1, pos = np.array([0.0,0.0,0.0]), psi0 = 0.0, agent_xml="default.xml"):
         '''Agent Object: parameters
@@ -44,6 +46,9 @@ class Agent():
         self.cmd_planar = np.array(pos[0:2])
         self.cmd_local_vel = np.array([0,0])
         self.cmd_forces = np.array([0,0])
+        # step memory for collisions
+        self.last_step_planar = [np.array(pos[0:2]),np.array([0,0])]
+        self.other_forces = np.array([0,0])
 
     @property
     def cmd_forces(self):
@@ -64,7 +69,6 @@ class Agent():
     @property
     def cmd_local_vel(self):
         return self._cmd_local_vel
-
     @cmd_local_vel.setter
     def cmd_local_vel(self,input):
         # sanity checks
@@ -121,25 +125,31 @@ class Agent():
         self.e_local_vel = parse_matrix(sim_agent.find('e_local_vel')) if sim_agent.find('e_local_vel') is not None else np.zeros(2)        
         self.clock_drift = float(sim_agent.find('clock_drift').text) if sim_agent.find('clock_drift') is not None else 0
 
-
         # Parse Sensors
         sensors_root = root.find('sensors')
         self.sensors={}
-        if sensors_root is None: return     #return if not defined
+        if not (sensors_root is None):      #skip if not defined
         # NN Detector
-        detector_root = sensors_root.find('NNDetector')
-        if detector_root:
-            self.sensors['NNDetector']={'period': float(detector_root.find('period').text)}
-            self.sensors['NNDetector']['field_of_view']= parse_matrix(detector_root.find('field_of_view'))
-            self.sensors['NNDetector']['visibility_model'] = detector_root.find('visibility_model').text
-            if "linear"== self.sensors['NNDetector']['visibility_model']:
-                self.sensors['NNDetector']['points'] = parse_matrix(detector_root.find('points'))
-            #Parse Sensor errors
-            self.sensors['e_NND_distance'] = parse_matrix(detector_root.find('e_distance')) if detector_root.find('e_distance') is not None else np.zeros(2)
-            self.sensors['e_NND_alpha'] =    parse_matrix(detector_root.find('e_alpha'))    if detector_root.find('e_alpha')    is not None else np.zeros(2)
-            self.sensors['e_NND_beta'] =    parse_matrix(detector_root.find('e_beta'))      if detector_root.find('e_beta')     is not None else np.zeros(2)
-            # add detector element
-            self.NNDetector={'time_lapsed': self.rnd.uniform(0,self.sensors['NNDetector']['period'])}
+            detector_root = sensors_root.find('NNDetector')
+            if detector_root:
+                self.sensors['NNDetector']={'period': float(detector_root.find('period').text)}
+                self.sensors['NNDetector']['field_of_view']= parse_matrix(detector_root.find('field_of_view'))
+                self.sensors['NNDetector']['visibility_model'] = detector_root.find('visibility_model').text
+                if "linear"== self.sensors['NNDetector']['visibility_model']:
+                    self.sensors['NNDetector']['points'] = parse_matrix(detector_root.find('points'))
+                #Parse Sensor errors
+                self.sensors['e_NND_distance'] = parse_matrix(detector_root.find('e_distance')) if detector_root.find('e_distance') is not None else np.zeros(2)
+                self.sensors['e_NND_alpha'] =    parse_matrix(detector_root.find('e_alpha'))    if detector_root.find('e_alpha')    is not None else np.zeros(2)
+                self.sensors['e_NND_beta'] =    parse_matrix(detector_root.find('e_beta'))      if detector_root.find('e_beta')     is not None else np.zeros(2)
+                # add detector element
+                self.NNDetector={'time_lapsed': self.rnd.uniform(0,self.sensors['NNDetector']['period'])}
+
+        # parse collisions
+        collision_root = root.find('collisions')
+        self.collision = {}
+        if not (collision_root is None): #skip if not defined
+            self.collision['radius'] = float(collision_root.find('radius').text)
+            self.collision['height'] = float(collision_root.find('height').text)
 
 
     def emulate_error (self, data, error):
@@ -154,7 +164,7 @@ class Agent():
         self.update_sensors()
         self.update_heading()
         self.update_depth()
-        self.update_planar()
+        self.update_planar(self.Dt)
         
     def update_internal_clock(self):
         ''' Keep track of the internal time clock'''
@@ -206,7 +216,11 @@ class Agent():
         # return result in the [0,360) range
         self.psi %=360
 
-    def update_planar(self):
+    def update_planar(self, Dt):
+        ''' tick based update of the planar position'''
+        ## Save last step state
+        self.last_step_planar = [self.pos[0:2],self.incurrent_velocity]
+        ## calculate correction and angles
         x_correction = self.cmd_planar[0]-self.measured_pos[0]
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
         sinpsi = np.sin(np.deg2rad(self.psi))
@@ -225,31 +239,40 @@ class Agent():
                 self.pos[0] += step*x_correction/d_correction
                 self.pos[1] += step*y_correction/d_correction
         elif "local_velocity"==self.planar_control:
-            effective_velocities = [self.emulate_error(self.cmd_local_vel[0],self.e_local_vel),
-                                    self.emulate_error(self.cmd_local_vel[1],self.e_local_vel)]
-            self.pos[0] += (effective_velocities[0] * cospsi + effective_velocities[1] * sinpsi) * self.Dt
-            self.pos[1] += (effective_velocities[0] * sinpsi - effective_velocities[1] * cospsi) * self.Dt
+            # NED convention
+            effective_velocities = [self.emulate_error( self.cmd_local_vel[0],self.e_local_vel),
+                                    self.emulate_error(-self.cmd_local_vel[1],self.e_local_vel)]
+            self.pos[0] += (effective_velocities[0] * cospsi + effective_velocities[1] * sinpsi) * Dt
+            self.pos[1] += (effective_velocities[0] * sinpsi - effective_velocities[1] * cospsi) * Dt
+        ## Case local force is the only one compatible to force collisions
         elif "local_forces"==self.planar_control:
-            F_tot = (self.cmd_forces + 
-                     np.matmul(self.linear_damping,self.incurrent_velocity)+
+            # Ned compatibility
+            external_forces = np.array([ self.cmd_forces[0]+self.other_forces[0],
+                                        -self.cmd_forces[1]-self.other_forces[1]])
+            F_tot = (external_forces +
+                     np.matmul(self.linear_damping, self.incurrent_velocity)+
                      np.matmul(self.quadratic_damping,abs(self.incurrent_velocity)*self.incurrent_velocity)
                      )
             acc_local = np.matmul(np.linalg.inv(self.tot_mass),F_tot)
-            self.incurrent_velocity = self.incurrent_velocity + acc_local*self.Dt
-
-            Dx = (self.incurrent_velocity[0] * cospsi + self.incurrent_velocity[1] * sinpsi) * self.Dt
-            Dy = (self.incurrent_velocity[0] * sinpsi - self.incurrent_velocity[1] * cospsi) * self.Dt
+            self.incurrent_velocity = self.incurrent_velocity + acc_local * Dt
+            Dx = (self.incurrent_velocity[0] * cospsi + self.incurrent_velocity[1] * sinpsi) * Dt
+            Dy = (self.incurrent_velocity[0] * sinpsi - self.incurrent_velocity[1] * cospsi) * Dt
             self.pos[0] += Dx
             self.pos[1] += Dy
 
     def cmd_fhd(self,force,heading,depth):
-        ''' typical triplet of commands'''
+        ''' typical triplet of commands, Force control- depth and heading step'''
         self.cmd_forces = force
         self.cmd_heading = heading
         self.cmd_depth = depth
 
-if __name__ == '__main__':
+    def cmd_xyz_phi (self, position, heading=None):
+        ''' position command, step '''
+        self.cmd_planar = position[0:2]
+        if 3==len(position): self.cmd_depth = position[3]
+        if heading: self.cmd_heading = heading
 
+if __name__ == '__main__':
     A1 = Agent("A1",0.1)
     A1.cmd_forces = np.array([1,0])
     A1.cmd_depth = 0.0

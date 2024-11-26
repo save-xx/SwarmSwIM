@@ -131,24 +131,32 @@ class Simulator():
         global_current = np.append(global_current,0)
         # Add space dependant currents
         for agent in self.agents:
-            # add space independent disturbances
-            agent.pos += global_current*self.Dt
+            local_current = np.array([0.,0.])
             # add turbolent field disturbance
             if self.environment['is_vortex_currents']:
-                current = self.vortex_field.current_vortex_calculate(agent)
-                agent.pos += np.append(current,0)*self.Dt
+                local_current += self.vortex_field.current_vortex_calculate(agent)
             # add localized turbolent noise
             if self.environment['is_noise_currents']:
-                current = self.turbolent_noise.calculate_noises(self.time,agent)
-                agent.pos += np.append(current,0)*self.Dt
-
+                local_current += self.turbolent_noise.calculate_noises(self.time,agent)
+            # add localized waves
+            if self.environment['is_local_waves']:
+                for waves in self.environment['local_waves']:
+                    local_current += sim_functions.local_waves(self.time , agent, 
+                                            waves['amplitude'], waves['wavespeed'],
+                                            waves['wavelength'], waves['direction'],
+                                            waves['shift'])
+            # add space independent disturbances
+            agent.pos += global_current*self.Dt
+            # add space dependant disturbances
+            agent.pos += np.append(local_current,0)*self.Dt
 
     def rel_pos(self,A,B):
         ''' measure relative distance of 2 agents, as vector A to B'''
         return (B.pos-A.pos)
     
     def acoustic_range(self,A,B):
-        ''' return range distance with accumulated delay, measured in A'''
+        ''' return  the acoustic range, measured in A. A in the current time instance
+        and B, in a past instance, relative to when the acoustic message was initated'''
         d0 = np.linalg.norm(self.rel_pos(A,B))
         delay_seconds= d0/C_SOUND
         if delay_seconds>=HISTORY_MEMORY: raise MemoryError ("The ditance delays exeed the history memory, \

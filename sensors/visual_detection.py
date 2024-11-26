@@ -53,6 +53,10 @@ class CNNDetection:
             else: 
                 if other.name in agent.NNDetector:
                     agent.NNDetector.pop(other.name)
+        # remove deleted agents
+        agent_names = {agent.name for agent in Simulator.agents}
+
+        agent.NNDetector = { k: v for k, v in agent.NNDetector.items() if k in agent_names or k=="time_lapsed"} 
 
     def is_detection_succesful(self, detection, agent):
         ''' Verify is detection is invluded in the agent FoV and if it has been detected '''

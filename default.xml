@@ -77,5 +77,11 @@
         </NNDetector>
     </sensors>
 
+    <!-- Add collision proprieties -->
+    <collisions>
+        <!-- collision box (cylinder) dimentions in meters  -->
+        <radius>0.2</radius>
+        <height>0.25</height>
+    </collisions>
 
 </data>

@@ -4,6 +4,7 @@ from matplotlib.patches import Polygon
 import numpy as np
 import random
 
+# number of elements preserved in the tail
 THRESHOLD = 300
 
 class Plotter:
