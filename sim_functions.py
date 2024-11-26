@@ -211,7 +211,7 @@ def global_waves(time_S , amplitude=  0.2, frequency = 0.25 , direction = 0.0, s
     current = np.array([force*versor[0], force*versor[1]]).astype(float)
     return current
 
-def local_waves(time_S,agent,amplitude=  0.2, wavespeed = 0.5, wavelenght = 2 ,direction = 0.0, shift = 0.0):
+def local_waves(time_S, agent, amplitude=  0.2, wavespeed = 0.5, wavelenght = 2 ,direction = 0.0, shift = 0.0):
     ''' generate a position and time dependant wave current'''
     k = 2*np.pi/wavelenght
     w = k*wavespeed

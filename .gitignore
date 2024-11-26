@@ -161,7 +161,9 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# FOLDERS NOT TO BE INCLUDED
+# FOLDERS NOT TO BE INCLUDED (windows and linux from UE5 VE build, legacy)
 LEGACY/
-Windows/
+Windows/    
 Linux/
+# Ignore the testing folder, if any
+testing/

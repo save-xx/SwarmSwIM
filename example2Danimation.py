@@ -11,8 +11,10 @@ circle = plt.Circle((0, 0), 20, color='g', fill=False, alpha=0.5)
 S = Simulator(1/24) 
 
 # set inital agents command
-S.agents[0].cmd_fhd(0.0,0,0)
-S.agents[2].cmd_fhd(-0.0,180,0.1)
+for agent in S.agents:
+    agent.cmd_forces= 0.3
+# S.agents[0].cmd_fhd(0.0,0,0)
+# S.agents[2].cmd_fhd(-0.0,180,0.1)
 
 # initate detection and animator classes
 Detection = CNNDetection()
@@ -29,10 +31,13 @@ def animation_callback():
     # compute relative detection
     Detection(S)
     # Add a new agent
-    if counter==100: S.add(Agent('B01'))
+    # if counter==100: S.add(Agent('B01'))
     # Remove an existing agent
-    if counter==200:S.remove(S.agents[1])
-
+    # if counter==200:
+    #     S.remove(S.agents[1])
+    #     # S.agents[0].cmd_fhd(1.0,180,0.0)
+    # if counter==550:
+    #     S.agents[0].cmd_fhd(1.0,-90,0.0)
 
     # Print data
     if not counter%24==0: return
