@@ -119,3 +119,7 @@ Launch as requested here in order to avoid crashing of UE5 environment!
 - Launch the `SimAPI.py` file, that provides the link between simulation and visual representation
 - Open the UnrealEngine project. In `Plugin`-->`Python`, add the path of the startup script int `Additional Paths`and the name of the script in `Startup Scripts`. In this way, UE5 will automatically launch the `init_unreal.py` script and set up the environment on opening the project.
 - Play the simulation in Unreal Engine
+
+### Download 
+[UE5 SwarmSim for Linux (Ubuntu)](https://drive.google.com/uc?export=download&id=16G_9QRhCBSX7UGSws5W-YAe6_rQ6eY0m)  
+[UE5 SwarmSim for Windows](https://drive.google.com/uc?export=download&id=1Jm6av7dfeh0tLGYfWLKlqPPpbLTuIgow)  
