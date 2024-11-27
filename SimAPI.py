@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from sim_class import Simulator
 import uvicorn, json
 import os
-import cv2
 import time
 import numpy as np
 import base64
@@ -25,6 +24,21 @@ def scale_to_UE5(data_in: dict):
 DIR_FILE = os.path.dirname(__file__)
 PHOTO_ID = {}
 DEBUG = False
+
+# STANDARD FUNCTIONS FOR API - UE5
+
+def ue5_method_img(**kwargs):
+    name = kwargs['name'] 
+    img  = kwargs['data']
+    if DEBUG:
+        cv2.putText(img, f"ID: {PHOTO_ID[name]}", (10,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
+        cv2.imshow(f'{name}_FOV', img)
+        cv2.waitKey(1)
+
+def ue5_method_echo(**kwargs):
+    if DEBUG: print(kwargs['data']/SCALE)
+
+# API CLASS
 
 class UE5_API:
     def __init__(self, mode = 'ue5', file:str='simulation.xml'):
@@ -56,7 +70,7 @@ class UE5_API:
 
         #   -> reception of image
         @self.app.put("/{agent_name}/view")
-        async def img_view(agent_name: str, data: str = Body(...)):
+        async def img_view(agent_name: str, data: str = Body(...), func = ue5_method_img):
             try:
                 if agent_name not in self.sim.states.keys():
                     raise HTTPException(status_code=404, detail="Agent not found")
@@ -67,11 +81,7 @@ class UE5_API:
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 # show all agents' front camera 
                 img = cv2.resize(img, (0,0), fx=0.5, fy=0.5)
-                if self.mode == 'ue5':
-                    if DEBUG:
-                        cv2.putText(img, f"ID: {PHOTO_ID[agent_name]}", (10,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
-                        cv2.imshow(f'{agent_name}_FOV', img)
-                        cv2.waitKey(1)
+                func({'name': agent_name, 'data': img})
 
             except Exception as ex:
                 return {'message':f'Exception: {ex}'}
@@ -80,14 +90,14 @@ class UE5_API:
 
         #   -> reception of echosounder
         @self.app.put("/{agent_name}/echo")
-        async def echosounder(agent_name: str, data: str = Body(...)):
+        async def echosounder(agent_name: str, data: str = Body(...), func = ue5_method_echo):
 
             value = np.frombuffer(base64.b64decode(data), np.float32)
-            if self.mode == 'ue5':
-                if DEBUG: print(value/SCALE)
+            func({'data': value})
             return {'message': f'{agent_name}/echo: delivered'}
         
-        # -------------------------------- FUNCS END -----------------------------------------
+    # ------------------------------------ FUNCS END -----------------------------------------
+
     def __call__(self):
         uvicorn.run(self.app, host='127.0.0.1', port=5555)
 
