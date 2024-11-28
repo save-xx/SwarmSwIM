@@ -1,11 +1,8 @@
 from fastapi import FastAPI, Body, HTTPException
-from pydantic import BaseModel
 from sim_class import Simulator
-import uvicorn, json
-import os
-import time
-import numpy as np
-import base64
+import os, uvicorn, json
+import numpy as np, base64
+from typing import Dict, Callable
 
 SCALE = 100
 def scale_to_UE5(data_in: dict):
@@ -27,7 +24,7 @@ DEBUG = False
 
 # STANDARD FUNCTIONS FOR API - UE5
 
-def ue5_method_img(**kwargs):
+def ue5_method_view(**kwargs):
     name = kwargs['name'] 
     img  = kwargs['data']
     if DEBUG:
@@ -43,6 +40,8 @@ def ue5_method_echo(**kwargs):
 class UE5_API:
     def __init__(self, mode = 'ue5', file:str='simulation.xml'):
 
+        # sensor -> callable!
+        self.callbacks: Dict[str, Callable[[dict], None]] = {}
         self.mode = mode
         self.sim = Simulator(1/60, sim_xml=os.path.join(DIR_FILE,file)) 
         self.app = FastAPI()
@@ -70,7 +69,7 @@ class UE5_API:
 
         #   -> reception of image
         @self.app.put("/{agent_name}/view")
-        async def img_view(agent_name: str, data: str = Body(...), func = ue5_method_img):
+        async def img_view(agent_name: str, data: str = Body(...)):
             try:
                 if agent_name not in self.sim.states.keys():
                     raise HTTPException(status_code=404, detail="Agent not found")
@@ -81,26 +80,32 @@ class UE5_API:
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 # show all agents' front camera 
                 img = cv2.resize(img, (0,0), fx=0.5, fy=0.5)
-                func({'name': agent_name, 'data': img})
+                self.callbacks['view']({'name': agent_name, 'data': img})
 
             except Exception as ex:
-                return {'message':f'Exception: {ex}'}
+                return {'message': f'Exception: {ex}'}
             
             return {'message': f'{agent_name}/img: delivered'}
 
         #   -> reception of echosounder
         @self.app.put("/{agent_name}/echo")
-        async def echosounder(agent_name: str, data: str = Body(...), func = ue5_method_echo):
+        async def echosounder(agent_name: str, data: str = Body(...)):
 
             value = np.frombuffer(base64.b64decode(data), np.float32)
-            func({'data': value})
+            self.callbacks['echo']({'data': value})
             return {'message': f'{agent_name}/echo: delivered'}
         
     # ------------------------------------ FUNCS END -----------------------------------------
+
+    def register_callback(self, sensor_name: str, callback: Callable[[dict], None]):
+        """Register a callback for a specific echosounder agent."""
+        self.callbacks[sensor_name] = callback
 
     def __call__(self):
         uvicorn.run(self.app, host='127.0.0.1', port=5555)
 
 if __name__=="__main__":
     api = UE5_API()
+    api.register_callback('echo', ue5_method_echo)
+    api.register_callback('view', ue5_method_view)
     api()
