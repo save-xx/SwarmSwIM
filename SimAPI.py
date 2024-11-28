@@ -1,10 +1,18 @@
 from fastapi import FastAPI, Body, HTTPException
+import uvicorn.config
+import uvicorn.server
 from sim_class import Simulator
 import os, uvicorn, json
 import numpy as np, base64
 from typing import Dict, Callable
 
+HOST = '11.1.0.116'
+PORT = 5555
+
+# -------------------- extra functions ----------------------------------------
+
 SCALE = 100
+
 def scale_to_UE5(data_in: dict):
     # works to scale up positions of actors
     state = {}
@@ -16,13 +24,13 @@ def scale_to_UE5(data_in: dict):
         state[key][3] += 90
     return state
 
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------
 
 DIR_FILE = os.path.dirname(__file__)
 PHOTO_ID = {}
 DEBUG = False
 
-# STANDARD FUNCTIONS FOR API - UE5
+# ------------------- STANDARD FUNCTIONS FOR API - UE5 --------------------------------------
 
 def ue5_method_view(**kwargs):
     name = kwargs['name'] 
@@ -35,10 +43,10 @@ def ue5_method_view(**kwargs):
 def ue5_method_echo(**kwargs):
     if DEBUG: print(kwargs['data']/SCALE)
 
-# API CLASS
+# ---------------------------------- API CLASS ----------------------------------------------
 
 class UE5_API:
-    def __init__(self, mode = 'ue5', file:str='simulation.xml'):
+    def __init__(self, mode:str='ue5', file: str='simulation.xml'):
 
         # sensor -> callable!
         self.callbacks: Dict[str, Callable[[dict], None]] = {}
@@ -64,6 +72,7 @@ class UE5_API:
         async def tick_exec():
             # update simulator
             self.sim.tick()
+            if self.callbacks['time']: self.callbacks['time']
             fish_states = scale_to_UE5(self.sim.states) 
             return {'message': 'Actor Position UPD: OK', 'data': f'{fish_states}'}
 
@@ -92,7 +101,7 @@ class UE5_API:
         async def echosounder(agent_name: str, data: str = Body(...)):
 
             value = np.frombuffer(base64.b64decode(data), np.float32)
-            self.callbacks['echo']({'data': value})
+            self.callbacks['echo']({'name': agent_name, 'data': value})
             return {'message': f'{agent_name}/echo: delivered'}
         
     # ------------------------------------ FUNCS END -----------------------------------------
@@ -101,8 +110,15 @@ class UE5_API:
         """Register a callback for a specific echosounder agent."""
         self.callbacks[sensor_name] = callback
 
+    async def call(self):
+        '''Server managed asynchronously. '''
+        config = uvicorn.Config(self.app, host='11.1.0.116', port=5555)
+        server = uvicorn.Server(config)
+        await server.serve()
+
     def __call__(self):
-        uvicorn.run(self.app, host='127.0.0.1', port=5555)
+        '''Blocking run of the server.'''
+        uvicorn.run(self.app, host='11.1.0.116', port=5555)
 
 if __name__=="__main__":
     api = UE5_API()
