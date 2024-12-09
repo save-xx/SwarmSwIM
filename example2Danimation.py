@@ -34,7 +34,7 @@ def animation_callback():
     Detection(S)
     Acoustic(S)
     # Add a new agent
-    if counter==100: Acoustic.send(S.agents[0], duration=1, payload="Hello from A1")
+    if counter==100: Acoustic.send(S.agents[0],S, duration=1, payload="Hello from A1")
     # Remove an existing agent
     # if counter==200:
     #     S.remove(S.agents[1])
