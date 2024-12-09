@@ -19,7 +19,8 @@ class Simulator():
         self.Dt = Dt
         self.history = {}
         self.agents = []
-
+        # if None is passed, use default
+        if sim_xml==None: sim_xml="simulation.xml"
         # initialize file agents
         self.agents_from_file(sim_xml)
 

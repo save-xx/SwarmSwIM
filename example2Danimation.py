@@ -1,6 +1,7 @@
 from agent_class import Agent
 from sim_class import Simulator
 from sensors.visual_detection import CNNDetection
+from sensors.acoustic_comm import AcousticChannel
 from animator2D import Plotter
 import matplotlib.pyplot as plt
 
@@ -13,11 +14,12 @@ S = Simulator(1/24)
 # set inital agents command
 for agent in S.agents:
     agent.cmd_forces= 0.3
-# S.agents[0].cmd_fhd(0.0,0,0)
+# S.agents[0].cmd_fhd(0.0 ,0 ,0)
 # S.agents[2].cmd_fhd(-0.0,180,0.1)
 
 # initate detection and animator classes
 Detection = CNNDetection()
+Acoustic = AcousticChannel()
 Animation = Plotter(S,artistics=[circle])
 
 counter = 0
@@ -30,8 +32,9 @@ def animation_callback():
     S.tick()
     # compute relative detection
     Detection(S)
+    Acoustic(S)
     # Add a new agent
-    # if counter==100: S.add(Agent('B01'))
+    if counter==100: Acoustic.send(S.agents[0], duration=1, payload="Hello from A1")
     # Remove an existing agent
     # if counter==200:
     #     S.remove(S.agents[1])

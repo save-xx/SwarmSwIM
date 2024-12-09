@@ -167,3 +167,5 @@ Windows/
 Linux/
 # Ignore the testing folder, if any
 testing/
+# ignore __pychache subfolders
+sensors/__pycache__

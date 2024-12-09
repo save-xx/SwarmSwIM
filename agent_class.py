@@ -4,8 +4,6 @@ import os, random
 
 DIR_FILE = os.path.dirname(__file__)
 
-
-
 class Agent():
     def __init__(self, name, Dt=0.1, pos = np.array([0.0,0.0,0.0]), psi0 = 0.0, agent_xml="default.xml"):
         '''Agent Object: parameters
@@ -124,6 +122,7 @@ class Agent():
         self.e_position  = parse_matrix(sim_agent.find('e_position'))  if sim_agent.find('e_position')  is not None else np.zeros(2)
         self.e_local_vel = parse_matrix(sim_agent.find('e_local_vel')) if sim_agent.find('e_local_vel') is not None else np.zeros(2)        
         self.clock_drift = float(sim_agent.find('clock_drift').text) if sim_agent.find('clock_drift') is not None else 0
+        ## TODO consider adding randomization
 
         # Parse Sensors
         sensors_root = root.find('sensors')

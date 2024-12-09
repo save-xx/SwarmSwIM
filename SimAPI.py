@@ -6,6 +6,7 @@ import os
 import time
 import numpy as np
 import base64
+import cv2
 
 SCALE = 100
 def scale_to_UE5(data_in: dict):
@@ -21,7 +22,6 @@ def scale_to_UE5(data_in: dict):
 
 # ------------------------------------------------------------------------------
 
-DIR_FILE = os.path.dirname(__file__)
 PHOTO_ID = {}
 DEBUG = False
 
@@ -41,10 +41,11 @@ def ue5_method_echo(**kwargs):
 # API CLASS
 
 class UE5_API:
-    def __init__(self, mode = 'ue5', file:str='simulation.xml'):
+    def __init__(self, sim, sim_loopFunc, mode = 'ue5'):
 
         self.mode = mode
-        self.sim = Simulator(1/60, sim_xml=os.path.join(DIR_FILE,file)) 
+        self.sim = sim
+        self.sim_loop = sim_loopFunc
         self.app = FastAPI()
 
     # -------------------------------- API FUNCS -----------------------------------------
@@ -64,7 +65,7 @@ class UE5_API:
         @self.app.get("/tick_exec")
         async def tick_exec():
             # update simulator
-            self.sim.tick()
+            self.sim_loop(self.sim)
             fish_states = scale_to_UE5(self.sim.states) 
             return {'message': 'Actor Position UPD: OK', 'data': f'{fish_states}'}
 
@@ -101,6 +102,36 @@ class UE5_API:
     def __call__(self):
         uvicorn.run(self.app, host='127.0.0.1', port=5555)
 
+
+##  ---------------------------
+##   Standalone Launch Sequence
+##  ---------------------------
+
 if __name__=="__main__":
-    api = UE5_API()
+
+    ## Standalone Imports
+    from sim_class import Simulator
+    import argparse
+
+    # If exist get the --xml argument to specify the simulation file to use
+    parser = argparse.ArgumentParser(description="Simulation xml filename")
+    # Add an optional argument
+    parser.add_argument('--xml', type=str, default="simulation", 
+                        help='Name of the xml file used to set the simulation. Default is "simulation"')
+    filename = parser.parse_args().xml+".xml"
+    DIR_FILE = os.path.dirname(__file__)
+    
+    ## -------------------------------------------
+    # Initialize simulation, defalut 60 fps
+    sim = Simulator(1/60, sim_xml=os.path.join(DIR_FILE,filename)) 
+
+    # create cycle function
+    def sim_loop(sim):
+        ''' barebone simulation'''
+        sim.tick()
+
+    ## ----------------------------------------------
+    
+    # Initiate and run the API 
+    api = UE5_API(sim, sim_loop)
     api()
