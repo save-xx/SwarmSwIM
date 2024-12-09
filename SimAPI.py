@@ -46,7 +46,6 @@ class UE5_API:
     def __init__(self, sim, sim_loopFunc, mode = 'ue5'):
 
         # sensor -> callable!
-        self.callbacks: Dict[str, Callable[[dict], None]] = {}
         self.mode = mode
         self.sim = sim
         self.sim_loop = sim_loopFunc
@@ -102,10 +101,6 @@ class UE5_API:
             return {'message': f'{agent_name}/echo: delivered'}
         
     # ------------------------------------ FUNCS END -----------------------------------------
-
-    def register_callback(self, sensor_name: str, callback: Callable[[dict], None]):
-        """Register a callback for a specific echosounder agent."""
-        self.callbacks[sensor_name] = callback
 
     async def call(self):
         '''Server managed asynchronously. '''
