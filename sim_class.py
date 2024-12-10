@@ -174,11 +174,12 @@ class Simulator():
         drift_variance = (A.internal_clock - B.internal_clock) * C_SOUND
         return ideal_range + drift_variance
 
-    def doppler(self,A,B,msg_dt=1.0):
+    def doppler(self,A,B):
         ''' return doppler shift as velocity. 
         msg_dt is the transmission time of the message
         doppler is considered measured in A - only for long range
         '''
+        msg_dt = A.sensors['ac_msg_length']
         ## Approxiate length in messages (minimum 2 considered)
         elements = int(np.ceil(msg_dt/self.Dt)+1)
         ## element shift due to acoustic delay
@@ -213,3 +214,5 @@ if __name__=="__main__":
         # print(f'{A1.pos[0]:.6f},{A1.pos[1]:.6f}')
     print('-----')
     print (S.OWTT_acoustic_range(S.agents[0],S.agents[1]))
+    print (S.acoustic_range(S.agents[0],S.agents[1]))
+    print (S.doppler(S.agents[0],S.agents[1]))

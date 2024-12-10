@@ -13,7 +13,7 @@
         Parameters are: 
             Frequency [Hz]: determines the period of each disturbance 
             Intensity [m/s]: determines the maximal intensity of noise current -->
-        <noise_currents> 0.0 0.0 </noise_currents>
+        <noise_currents> 0.5 0.3 </noise_currents>
 
         <!-- Define vorticity field current -->
         <!-- Adds time-constant, location-dependent randomized current.
@@ -57,13 +57,13 @@
             -->
             <wave1>
                 <!-- Peak intensity of current disturbance in m/s -->
-                <amplitude> 1.0 </amplitude> 
+                <amplitude> 0.0 </amplitude> 
                 <!-- Wavelength in m -->
-                <wavelength> 20.0 </wavelength>
+                <wavelength> 0.0 </wavelength>
                 <!-- Wave advancement velocity in m/s -->
-                <wavespeed> 2.0 </wavespeed>
+                <wavespeed> 0.0 </wavespeed>
                 <!-- Direction of advancement of waves and direction of current contribution [degree] -->
-                <direction> 170.0 </direction>
+                <direction> 0.0 </direction>
                 <!-- Time shift of wave [0,2pi] -->
                 <shift> 0.0 </shift>
             </wave1>

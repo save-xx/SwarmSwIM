@@ -14,8 +14,6 @@ S = Simulator(1/24)
 # set inital agents command
 for agent in S.agents:
     agent.cmd_forces= 0.3
-# S.agents[0].cmd_fhd(0.0 ,0 ,0)
-# S.agents[2].cmd_fhd(-0.0,180,0.1)
 
 # initate detection and animator classes
 Detection = CNNDetection()
@@ -35,12 +33,6 @@ def animation_callback():
     Acoustic(S)
     # Add a new agent
     if counter==100: Acoustic.send(S.agents[0],S, duration=1, payload="Hello from A1")
-    # Remove an existing agent
-    # if counter==200:
-    #     S.remove(S.agents[1])
-    #     # S.agents[0].cmd_fhd(1.0,180,0.0)
-    # if counter==550:
-    #     S.agents[0].cmd_fhd(1.0,-90,0.0)
 
     # Print data
     if not counter%24==0: return

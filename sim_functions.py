@@ -82,7 +82,7 @@ def parse_envrioment_parameters(local_path):
             wave_param['direction']  = float(wave.find("direction").text  )
             wave_param['shift']      = float(wave.find("shift").text      )
             data['local_waves'].append(wave_param)
-            
+
     else: data['is_local_waves']=False
 
     # return structure with all unpacked data
@@ -213,6 +213,7 @@ def global_waves(time_S , amplitude=  0.2, frequency = 0.25 , direction = 0.0, s
 
 def local_waves(time_S, agent, amplitude=  0.2, wavespeed = 0.5, wavelenght = 2 ,direction = 0.0, shift = 0.0):
     ''' generate a position and time dependant wave current'''
+    if np.isclose(wavelenght, 0.0, atol=1e-9): return np.array([0.0,0.0])
     k = 2*np.pi/wavelenght
     w = k*wavespeed
     versor=[np.cos(np.deg2rad(direction)),np.sin(np.deg2rad(direction))]
