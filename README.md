@@ -140,6 +140,9 @@ The animator2D provides a simple representation of the agents on the planar posi
 
 - **cmd_xyz_phi(position,heading)**->None: Set desired waypoint (np.array[3]) and heading (float)
 
+## ROS2 Implementation
+Install the core as above and then refer to [swarmsim](https://github.com/save-xx/swarmsim)
+
 ## Unreal Engine: Simulation [EXPERIMENTAL - STILL UNDER DEV]
 Two files are added to give you the possibility to simulate a 3D marine environment. Use the sample project that is shared in the 'UE5_sim' folder as a sample. 
 
