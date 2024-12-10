@@ -43,13 +43,15 @@ class AcousticChannel:
             new_circle = {'radii': [0.0,0.0], 'times': [time, time+duration], 'center': Agent.pos}
             self.channel_status[idx_collision]['circles'].append(new_circle)
             self.channel_status[idx_collision]['status'] = "collision"
+            self.channel_status[idx_collision]['delivered'].append(Agent)
             self.channel_status[idx_collision]['payload'] = None
+            self.channel_status[idx_collision]['sender'] = "Failed"
             return "sent - collision"
 
         # If suceesfull the add new event
         if status=="active":
             new_circle = {'radii': [0.0,0.0], 'times': [time, time+duration], 'center': Agent.pos}
-            event = {'circles': [new_circle], 'status': "active", 'payload': payload , 'delivered': [Agent]}
+            event = {'circles': [new_circle], 'status': "active", 'payload': payload , 'delivered': [Agent], 'sender': Agent.name}
             self.channel_status.append(event)
             return "sent"
 
@@ -77,7 +79,7 @@ class AcousticChannel:
                 if recived: 
                     # record as delivered
                     event['delivered'].append(agent)
-                    delivered[agent.name] = event['payload']
+                    delivered[agent.name] = [event['payload'],event['sender']]
         
         # Clean up expired events from the channel
         for event in self.channel_status:

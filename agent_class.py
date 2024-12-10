@@ -142,6 +142,11 @@ class Agent():
                 self.sensors['e_NND_beta'] =    parse_matrix(detector_root.find('e_beta'))      if detector_root.find('e_beta')     is not None else np.zeros(2)
                 # add detector element
                 self.NNDetector={'time_lapsed': self.rnd.uniform(0,self.sensors['NNDetector']['period'])}
+            acoustic_root = sensors_root.find('Acoustic_Ranging')
+            if acoustic_root:
+                self.sensors['ac_msg_length'] = float(acoustic_root.find('msg_length').text)
+                self.sensors['e_ac_range'] = parse_matrix(acoustic_root.find('e_ac_range')) if acoustic_root.find('e_ac_range') is not None else np.zeros(2)
+                self.sensors['e_ac_doppler']  = parse_matrix(acoustic_root.find('e_doppler'))  if acoustic_root.find('e_doppler')  is not None else np.zeros(2)
 
         # parse collisions
         collision_root = root.find('collisions')

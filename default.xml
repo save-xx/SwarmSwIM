@@ -75,6 +75,18 @@
             <e_alpha>0.0 0.0</e_alpha> 
             <e_beta>0.0 0.0</e_beta>
         </NNDetector>
+
+        <!-- Add Acoustic ranging Detection Sensing -->
+        <Acoustic_Ranging>
+            <!-- Duration of a package in seconds (average) -->
+            <msg_length>1.0</msg_length>
+            <!-- Time independet bias and variance of range measurament (consevatively Two Way Time Traver error) [meters]-->
+            <e_ac_range>0.0 0.0</e_ac_range>
+            <!-- Error on communication doppler measurament (with constant relative speed) -->
+            <e_doppler>0.0 0.0</e_doppler>
+        </Acoustic_Ranging>
+
+
     </sensors>
 
     <!-- Add collision proprieties -->

@@ -163,9 +163,16 @@ class Simulator():
         if delay_seconds>=HISTORY_MEMORY: raise MemoryError ("The ditance delays exeed the history memory, \
                                                                 increase the memory interval HISTORY_MEMORY")
         times = np.arange(-(len(self.history[B.name]) - 1) * self.Dt, self.Dt, self.Dt)
-        dists = [np.linalg.norm(Bhist - A.pos) for Bhist in self.history[B.name]] # check
-        print(dists)
-        return np.interp(-delay_seconds,times,dists)
+        dists = [np.linalg.norm(Bhist - A.pos) for Bhist in self.history[B.name]] 
+        perfect_distance = np.interp(-delay_seconds,times,dists)                        # Distance assumed no error
+        measured_distance = A.emulate_error( perfect_distance, A.sensors['e_ac_range'] )   # Added measurment
+        return measured_distance
+
+    def OWTT_acoustic_range(self,A,B):
+        ''' return the One Way Time Traver Ranging accounting for clock drift'''
+        ideal_range = self.acoustic_range(A,B)
+        drift_variance = (A.internal_clock - B.internal_clock) * C_SOUND
+        return ideal_range + drift_variance
 
     def doppler(self,A,B,msg_dt=1.0):
         ''' return doppler shift as velocity. 
@@ -185,7 +192,9 @@ class Simulator():
             # collect distances over msg time interval (minimum 2)
             distance = (self.history[B.name][-1-i-delay_steps]-self.history[A.name][-1-i])
             ranges.append(np.linalg.norm(distance))
-        return np.mean(np.diff(ranges)/self.Dt)
+        perfect_doppler = np.mean(np.diff(ranges)/self.Dt)          # ideal measurment of doppler
+        measured_doppler = A.emulate_error( perfect_doppler, A.sensors['e_ac_doppler'] ) 
+        return measured_doppler
     
     @property
     def states(self):
@@ -203,3 +212,4 @@ if __name__=="__main__":
         S.tick()
         # print(f'{A1.pos[0]:.6f},{A1.pos[1]:.6f}')
     print('-----')
+    print (S.OWTT_acoustic_range(S.agents[0],S.agents[1]))
