@@ -1,10 +1,7 @@
 from fastapi import FastAPI, Body, HTTPException, Request
-import uvicorn.config
-import uvicorn.server
-from sim_class import Simulator
+from typing import Callable
 import uvicorn, json
 import os
-import time
 import numpy as np
 import base64
 import cv2
@@ -29,16 +26,29 @@ DEBUG = False
 
 # ------------------- STANDARD FUNCTIONS FOR API - UE5 --------------------------------------
 
+def ue5_method_none(**kwargs):
+    # unpack
+    name = kwargs['name'] 
+    val  = kwargs['data']
+    # execute
+    pass
+
 def ue5_method_view(**kwargs):
+    # unpack
     name = kwargs['name'] 
     img  = kwargs['data']
+    # execute
     if DEBUG:
         cv2.putText(img, f"ID: {PHOTO_ID[name]}", (10,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
         cv2.imshow(f'{name}_FOV', img)
         cv2.waitKey(1)
 
 def ue5_method_echo(**kwargs):
-    if DEBUG: print(kwargs['data']/SCALE)
+    # unpack
+    name = kwargs['name'] 
+    val  = kwargs['data']
+    # execute
+    if DEBUG: print(val/SCALE)
 
 # ---------------------------------- API CLASS ----------------------------------------------
 
@@ -49,7 +59,12 @@ class UE5_API:
         self.mode = mode
         self.sim = sim
         self.sim_loop = sim_loopFunc
+        self.callbacks = {}
         self.app = FastAPI()
+
+        if self.mode == 'ue5':
+            self.set_callback('echo',ue5_method_echo)
+            self.set_callback('view',ue5_method_view)
 
     # -------------------------------- API FUNCS -----------------------------------------
 
@@ -85,7 +100,7 @@ class UE5_API:
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 # show all agents' front camera 
                 img = cv2.resize(img, (0,0), fx=0.5, fy=0.5)
-                self.callbacks['view']({'name': agent_name, 'data': img})
+                self.callbacks['view'](name=agent_name, data=img)
 
             except Exception as ex:
                 return {'message': f'Exception: {ex}'}
@@ -97,7 +112,7 @@ class UE5_API:
         async def echosounder(agent_name: str, data: str = Body(...)):
 
             value = np.frombuffer(base64.b64decode(data), np.float32)
-            self.callbacks['echo']({'name': agent_name, 'data': value})
+            self.callbacks['echo'](name=agent_name, data=value)
             return {'message': f'{agent_name}/echo: delivered'}
         
     # ------------------------------------ FUNCS END -----------------------------------------
@@ -108,7 +123,12 @@ class UE5_API:
         server = uvicorn.Server(config)
         await server.serve()
 
+    def set_callback(self, name: str, clbk: Callable):
+        '''Add callback functions for sensor. '''
+        self.callbacks[name] = clbk
+
     def __call__(self):
+        '''Run the API. '''
         uvicorn.run(self.app, host='127.0.0.1', port=5555)
 
 if __name__=="__main__":
