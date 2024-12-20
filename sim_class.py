@@ -193,7 +193,7 @@ class Simulator():
             # collect distances over msg time interval (minimum 2)
             distance = (self.history[B.name][-1-i-delay_steps]-self.history[A.name][-1-i])
             ranges.append(np.linalg.norm(distance))
-        perfect_doppler = np.mean(np.diff(ranges)/self.Dt)          # ideal measurment of doppler
+        perfect_doppler = np.mean(-np.diff(ranges)/self.Dt)          # ideal measurment of doppler
         measured_doppler = A.emulate_error( perfect_doppler, A.sensors['e_ac_doppler'] ) 
         return measured_doppler
     

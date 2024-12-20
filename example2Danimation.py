@@ -51,8 +51,8 @@ def animation_callback():
             if key=='time_lapsed': continue
             print(f'    {key} : ',end="") 
             print(f'[ dist: {agent.NNDetector[key][0]:.2f} ',end="") 
-            print(f'alpha: {agent.NNDetector[key][0]:.2f} ',end="") 
-            print(f'beta: {agent.NNDetector[key][0]:.2f} ]') 
+            print(f'alpha: {agent.NNDetector[key][1]:.2f} ',end="") 
+            print(f'beta: {agent.NNDetector[key][2]:.2f} ]') 
     print()
 
 # MAIN
