@@ -1,17 +1,17 @@
 import numpy as np
 import xml.etree.ElementTree as ET
-import os, random
+import os
 
 DIR_FILE = os.path.dirname(__file__)
 
 class Agent():
-    def __init__(self, name, Dt=0.1, pos = np.array([0.0,0.0,0.0]), psi0 = 0.0, agent_xml="default.xml"):
+    def __init__(self, name, Dt=0.1, initialPosition = np.array([0.0,0.0,0.0]), initialHeading = 0.0, agent_xml="default.xml"):
         '''Agent Object: parameters
-        name: str, unique name 
-        Dt: time subdivision
-        pos: list or numpy array of 3 elements, determining global position at start, default is 0,0,0
-        psi0: float: initial heading in degrees, default is 0.0 (North)
-        agent_xml: filename of agent setting, default is default.xml'''
+        - name: (str) unique name 
+        - Dt: (float) time subdivision
+        - initialPosition: (array-like size 3) determining global position at start. Default [0,0,0]
+        - initialHeading: float: initial heading in degrees, default is 0.0 (North)
+        - agent_xml: filename of agent setting, default is default.xml'''
         # private
         self._cmd_force = np.array([0.0,0.0])
         self._cmd_local_vel = np.array([0.0,0.0])
@@ -20,32 +20,32 @@ class Agent():
         # Set inital condition
         self.name = name
         # Set initial positiion
-        if not 3==len(pos): raise ValueError ('Passed initial position is not a 3 element Array or list')
-        if type(pos) in (tuple,list): self.pos =np.array(pos).astype(float) #convert to numpy array
-        else: self.pos = pos.astype(float)
+        if not 3==len(initialPosition): raise ValueError ('Passed initial position is not a 3 element Array or list')
+        if type(initialPosition) in (tuple,list): self.pos =np.array(initialPosition).astype(float) #convert to numpy array
+        else: self.pos = initialPosition.astype(float)
         # Set initial heading
-        self.psi = psi0
-        # genrate random seed based on name
-        self.rnd = np.random.RandomState(hash(name)%2**30)
+        self.psi = initialHeading
+        # Genrate random seed based on name
+        self.rnd = np.random.default_rng(hash(name)%2**30)
         # Load agent parameters from xml
         self.parse_agent_parameters(agent_xml)
         # Parameter initialization
         self.internal_clock= 0.0
         self.incurrent_velocity = np.array([0,0])
         # Sensors initialization
-        self.measured_depth = pos[2]
-        self.measured_heading = psi0
-        self.measured_pos = pos[0:2]
+        self.measured_depth = initialPosition[2]
+        self.measured_heading = initialHeading
+        self.measured_pos = initialPosition[0:2]
         # Command initialization
-        self.cmd_depth = pos[2]
+        self.cmd_depth = initialPosition[2]
         self.cmd_heave = 0
-        self.cmd_heading = psi0
+        self.cmd_heading = initialHeading
         self.cmd_yawrate = 0
-        self.cmd_planar = np.array(pos[0:2])
+        self.cmd_planar = np.array(initialPosition[0:2])
         self.cmd_local_vel = np.array([0,0])
         self.cmd_forces = np.array([0,0])
         # step memory for collisions
-        self.last_step_planar = [np.array(pos[0:2]),np.array([0,0])]
+        # self.last_step_planar = [np.array(initialPosition[0:2]),np.array([0,0])]
         self.other_forces = np.array([0,0])
 
     @property
@@ -81,10 +81,13 @@ class Agent():
 
     def parse_agent_parameters(self, local_path):
         ''' Read the xml file for the agents charateristics'''
+        #--------------------
+        # Local Function - parsing of vectors and matrix from XML
         def parse_matrix(element):
-        # Split the text into rows and then convert each row to a list of floats
+            ''' Split the text into rows and then convert each row to a list of floats '''
             matrix = np.array([list(map(float, row.split())) for row in element.text.strip().split('\n')])
             return np.squeeze(matrix)
+        #--------------------
         # fix path if local or global
         if os.path.isabs(local_path): path = local_path
         else: path = os.path.join(DIR_FILE,local_path)
@@ -92,6 +95,7 @@ class Agent():
         root = tree.getroot()
         sim_agent = root.find('sim_agent')
         if sim_agent is None: raise ValueError("The XML does not contain a <sim_agent> element.")
+        #--------------------
         # Parse required parameters
         self.mass = float(sim_agent.find('mass').text)
         self.added_mass = parse_matrix(sim_agent.find('added_mass'))
@@ -114,7 +118,7 @@ class Agent():
         # Parse Control planar
         self.planar_control = sim_agent.find('planar_control').text
         if "step"==self.planar_control: self.step_planar= float(sim_agent.find('step_planar').text)
-        #Parse Navigation errors
+        # Parse Navigation errors
         self.e_depth     = parse_matrix(sim_agent.find('e_depth'))     if sim_agent.find('e_depth')     is not None else np.zeros(2)
         self.e_heave     = parse_matrix(sim_agent.find('e_heave'))     if sim_agent.find('e_heave')     is not None else np.zeros(2)
         self.e_heading   = parse_matrix(sim_agent.find('e_heading'))   if sim_agent.find('e_heading')   is not None else np.zeros(2)
@@ -123,7 +127,7 @@ class Agent():
         self.e_local_vel = parse_matrix(sim_agent.find('e_local_vel')) if sim_agent.find('e_local_vel') is not None else np.zeros(2)        
         self.clock_drift = float(sim_agent.find('clock_drift').text) if sim_agent.find('clock_drift') is not None else 0
         ## TODO consider adding randomization
-
+        #--------------------
         # Parse Sensors
         sensors_root = root.find('sensors')
         self.sensors={}
@@ -147,13 +151,13 @@ class Agent():
                 self.sensors['ac_msg_length'] = float(acoustic_root.find('msg_length').text)
                 self.sensors['e_ac_range'] = parse_matrix(acoustic_root.find('e_ac_range')) if acoustic_root.find('e_ac_range') is not None else np.zeros(2)
                 self.sensors['e_ac_doppler']  = parse_matrix(acoustic_root.find('e_doppler'))  if acoustic_root.find('e_doppler')  is not None else np.zeros(2)
-
-        # parse collisions
-        collision_root = root.find('collisions')
-        self.collision = {}
-        if not (collision_root is None): #skip if not defined
-            self.collision['radius'] = float(collision_root.find('radius').text)
-            self.collision['height'] = float(collision_root.find('height').text)
+        #--------------------
+        # # parse collisions
+        # collision_root = root.find('collisions')
+        # self.collision = {}
+        # if not (collision_root is None): #skip if not defined
+        #     self.collision['radius'] = float(collision_root.find('radius').text)
+        #     self.collision['height'] = float(collision_root.find('height').text)
 
 
     def emulate_error (self, data, error):
@@ -223,7 +227,7 @@ class Agent():
     def update_planar(self, Dt):
         ''' tick based update of the planar position'''
         ## Save last step state
-        self.last_step_planar = [self.pos[0:2],self.incurrent_velocity]
+        # self.last_step_planar = [self.pos[0:2],self.incurrent_velocity]
         ## calculate correction and angles
         x_correction = self.cmd_planar[0]-self.measured_pos[0]
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
@@ -250,7 +254,8 @@ class Agent():
             self.pos[1] += (effective_velocities[0] * sinpsi - effective_velocities[1] * cospsi) * Dt
         ## Case local force is the only one compatible to force collisions
         elif "local_forces"==self.planar_control:
-            # Ned compatibility
+            # NED convention
+            # TODO Add effective Forces and e_forces
             external_forces = np.array([ self.cmd_forces[0]+self.other_forces[0],
                                         -self.cmd_forces[1]-self.other_forces[1]])
             F_tot = (external_forces +
@@ -264,17 +269,32 @@ class Agent():
             self.pos[0] += Dx
             self.pos[1] += Dy
 
-    def cmd_fhd(self,force,heading,depth):
-        ''' typical triplet of commands, Force control- depth and heading step'''
-        self.cmd_forces = force
-        self.cmd_heading = heading
-        self.cmd_depth = depth
 
-    def cmd_xyz_phi (self, position, heading=None):
-        ''' position command, step '''
-        self.cmd_planar = position[0:2]
-        if 3==len(position): self.cmd_depth = position[3]
-        if heading: self.cmd_heading = heading
+    ## Built-in command packages ##
+
+    def cmd_fhd(self, forceNewton ,headingDegrees ,depthMeters):
+        ''' 
+        Control in Planar force, step heading and depth  
+        - forceNewton: (array-like size 2 or float) planar force vector in Newton, referred to body frame
+          - if float, assume force vector in the direction of heading (surge).
+        - headingDegrees: (float) planar direction (psi) in ddegrees. NED convention
+        - depthMeters: (float) desired depth in meters
+        '''
+        self.cmd_forces = forceNewton
+        self.cmd_heading = headingDegrees
+        self.cmd_depth = depthMeters
+
+    def cmd_xyz_phi (self, positionMeters, headingDegrees=None):
+        ''' 
+        Position command,  planar step control, heading and depth  
+        - positionMeters: (array-like size 2 or 3) position vector respect to global coordinates.  
+          - If of size 3 depth is updated, otherwise previous depth is mantained.  
+        - headingDegrees: (float, Optional), heading of the agent.  
+        '''
+        # Set desired planar Coordinates
+        self.cmd_planar = positionMeters[0:2]
+        if 3==len(positionMeters): self.cmd_depth = positionMeters[3]
+        if headingDegrees: self.cmd_heading = headingDegrees
 
 if __name__ == '__main__':
     A1 = Agent("A1",0.1)

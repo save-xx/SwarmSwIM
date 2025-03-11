@@ -3,10 +3,11 @@ import numpy as np
 SEED = 111
 
 class CNNDetection:
-    def __init__(self, visibility_model = None):
+    def __init__(self, rnd = None, visibility_model = None):
         self.visibility_model = visibility_model
         # genrate random seed
-        self.rnd = np.random.RandomState(SEED)
+        if rnd: self.rnd = rnd
+        else: self.rnd = np.random.default_rng()
 
     def emulate_error (self, data, error):
         ''' Alter the input data to simulate measurment errors '''
@@ -71,7 +72,7 @@ class CNNDetection:
             probability = np.interp(detection[0],
                                     agent.sensors['NNDetector']['points'][0],
                                     agent.sensors['NNDetector']['points'][1])
-            if self.rnd.rand()>probability: return False 
+            if self.rnd.random()>probability: return False 
             else: return True
 
 

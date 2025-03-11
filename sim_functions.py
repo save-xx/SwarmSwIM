@@ -21,6 +21,10 @@ def parse_envrioment_parameters(local_path):
 
     tree = ET.parse(path)
     root = tree.getroot()
+
+    # get random seed if any
+    data['seed'] = int(root.find('seed').text) if root.find('seed') is not None else None
+
     env_root = root.find('environment_setup')
     if env_root is None: raise ValueError("The XML does not contain a <environment_setup> element.")
     
@@ -115,11 +119,11 @@ def parse_agents(local_path):
 
 class VortexField:
     ''' Vortex currents generator, time independent'''
-    def __init__(self,density=30,intensity=0.5,rng=np.random.RandomState(124)):
+    def __init__(self,density=30,intensity=0.5,rng=np.random.default_rng()):
         # density is number of vortexes in a 100 square-meter area
         n_vortices = int(density) 
         # genrate vortexes and intensity on the random seed
-        self.random_intensity = intensity*(2*rng.rand(n_vortices)-1)
+        self.random_intensity = intensity*(2*rng.random(n_vortices)-1)
         self.vortex_centers = rng.uniform(0, 100, size=(n_vortices, 2))
 
     def single_vortex_contribution(self,x,y,vortex,intensity):
@@ -155,7 +159,7 @@ class VortexField:
 
 class TimeNoise:
     ''' generate time based, space independent noise for each agent, with set frequency'''
-    def __init__(self,time,freq=1.0,intensity=0.2,rng = np.random.RandomState(124)) -> None:
+    def __init__(self,time,freq=1.0,intensity=0.2,rng = np.random.default_rng()) -> None:
         # seed for repetable random
         self.rng = rng
         # set timer
