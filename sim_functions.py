@@ -108,7 +108,10 @@ def parse_agents(local_path):
             filename = os.path.join(dir_name,filename)
             nametype = agent_type.find("name").text 
             states = parse_matrix(agent_type.find('state'))
+            # Handle single element case
             if 1==states.ndim: states=np.array([states])
+            # Handle no element case
+            if not states.size: continue 
             for i, state in enumerate(states):
                 name = f"{nametype}{i+1:02}"
                 data[name]=[state[0:3],state[3],filename]
