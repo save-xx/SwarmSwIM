@@ -142,7 +142,7 @@ class VortexField:
         if y-yv<-50: yv-=100      
         # calculate intensity based on distance
         distance = (x-xv)**2+(y-yv)**2 
-        vorticity = intensity / (distance + 1)**0.8
+        vorticity = intensity / (distance + 1)**0.75
         # get vorticosity components 
         curr_x =   vorticity * (y-yv) 
         curr_y =  -vorticity * (x-xv) 
