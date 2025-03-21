@@ -5,7 +5,7 @@ import os
 DIR_FILE = os.path.dirname(__file__)
 
 class Agent():
-    def __init__(self, name, Dt=0.1, initialPosition = np.array([0.0,0.0,0.0]), initialHeading = 0.0, agent_xml="default.xml"):
+    def __init__(self, name, Dt=0.1, initialPosition = np.array([0.0,0.0,0.0]), initialHeading = 0.0, agent_xml="default.xml",rng=None):
         '''Agent Object: parameters
         - name: (str) unique name 
         - Dt: (float) time subdivision
@@ -26,7 +26,8 @@ class Agent():
         # Set initial heading
         self.psi = initialHeading
         # Genrate random seed based on name
-        self.rnd = np.random.default_rng(hash(name)%2**30)
+        if not rng: self.rnd = np.random.default_rng()
+        else: self.rnd = np.random.default_rng(hash(name)%2**20 + rng)
         # Load agent parameters from xml
         self.parse_agent_parameters(agent_xml)
         # Parameter initialization
@@ -44,8 +45,8 @@ class Agent():
         self.cmd_planar = np.array(initialPosition[0:2])
         self.cmd_local_vel = np.array([0,0])
         self.cmd_forces = np.array([0,0])
-        # step memory for collisions
-        # self.last_step_planar = [np.array(initialPosition[0:2]),np.array([0,0])]
+        # step memory 
+        self.last_step_planar = np.array(initialPosition[0:2])
         self.other_forces = np.array([0,0])
 
     @property
@@ -61,6 +62,8 @@ class Agent():
         elif type(input) in (list,tuple) and 2==len(input):
             self._cmd_force =  np.array(input).astype('float')
         elif type(input)==int or type(input)==float:
+            self._cmd_force =  np.array([float(input),0.0])
+        elif np.issubdtype(type(input), np.floating):
             self._cmd_force =  np.array([float(input),0.0])
         else: raise ValueError('force command must be length 2 numpy array, 2 element list, tuple or a number.')
 
@@ -118,6 +121,8 @@ class Agent():
         # Parse Control planar
         self.planar_control = sim_agent.find('planar_control').text
         if "step"==self.planar_control: self.step_planar= float(sim_agent.find('step_planar').text)
+        if "inertial_velocity"==self.planar_control:
+            self.vel_limit = parse_matrix(sim_agent.find('vel_limit'))
         # Parse Navigation errors
         self.e_depth     = parse_matrix(sim_agent.find('e_depth'))     if sim_agent.find('e_depth')     is not None else np.zeros(2)
         self.e_heave     = parse_matrix(sim_agent.find('e_heave'))     if sim_agent.find('e_heave')     is not None else np.zeros(2)
@@ -226,8 +231,9 @@ class Agent():
 
     def update_planar(self, Dt):
         ''' tick based update of the planar position'''
-        ## Save last step state
-        # self.last_step_planar = [self.pos[0:2],self.incurrent_velocity]
+        def get_emulated_velocities():
+            return [self.emulate_error( self.cmd_local_vel[0],self.e_local_vel),
+                    self.emulate_error(-self.cmd_local_vel[1],self.e_local_vel)]
         ## calculate correction and angles
         x_correction = self.cmd_planar[0]-self.measured_pos[0]
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
@@ -247,12 +253,20 @@ class Agent():
                 self.pos[0] += step*x_correction/d_correction
                 self.pos[1] += step*y_correction/d_correction
         elif "local_velocity"==self.planar_control:
-            # NED convention
-            effective_velocities = [self.emulate_error( self.cmd_local_vel[0],self.e_local_vel),
-                                    self.emulate_error(-self.cmd_local_vel[1],self.e_local_vel)]
-            self.pos[0] += (effective_velocities[0] * cospsi + effective_velocities[1] * sinpsi) * Dt
-            self.pos[1] += (effective_velocities[0] * sinpsi - effective_velocities[1] * cospsi) * Dt
-        ## Case local force is the only one compatible to force collisions
+            emulated_velocities = get_emulated_velocities()
+            self.pos[0] += (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
+            self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
+        elif "inertial_velocity"==self.planar_control:
+            step = (self.Dt*self.vel_limit)
+            emulated_velocities = get_emulated_velocities()
+            ideal_x_pos = self.last_step_planar[0] + (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
+            ideal_y_pos = self.last_step_planar[1] + (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
+            # limitation of maximal velocity vector
+            if abs(ideal_x_pos-self.pos[0])<step[0]: self.pos[0] = ideal_x_pos
+            else: self.pos[0] += np.copysign(step[0], ideal_x_pos-self.pos[0])
+            if abs(ideal_y_pos-self.pos[1])<step[1]: self.pos[1] = ideal_y_pos
+            else: self.pos[1] += np.copysign(step[1], ideal_y_pos-self.pos[1])
+
         elif "local_forces"==self.planar_control:
             # NED convention
             # TODO Add effective Forces and e_forces
@@ -269,6 +283,8 @@ class Agent():
             self.pos[0] += Dx
             self.pos[1] += Dy
 
+        ## Save last step state
+        self.last_step_planar = self.pos[0:2].copy()
 
     ## Built-in command packages ##
 

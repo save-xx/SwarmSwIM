@@ -66,7 +66,7 @@ class CNNDetection:
         if abs(detection[2])>(agent.sensors['NNDetector']['field_of_view'][1]/2): return False
         ## Probabilistic visibility models
         # no model, always effective
-        if None==agent.sensors['NNDetector']['visibility_model']: return True
+        if None == agent.sensors['NNDetector']['visibility_model'] or "none" == agent.sensors['NNDetector']['visibility_model']: return True
         # linear interpolation on n points 
         if agent.sensors['NNDetector']['visibility_model']=="linear":
             probability = np.interp(detection[0],

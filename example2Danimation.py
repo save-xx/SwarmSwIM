@@ -15,6 +15,7 @@ S = Simulator(1/24)
 for agent in S.agents:
     agent.cmd_forces= 0.3
 
+
 # initate detection and animator classes
 Detection = CNNDetection()
 Acoustic = AcousticChannel()
@@ -33,7 +34,6 @@ def animation_callback():
     Acoustic(S)
     # Add a new agent
     if counter==100: Acoustic.send(S.agents[0],S, duration=1, payload="Hello from A1")
-
     # Print data
     if not counter%24==0: return
     print('--- Positions: ---')

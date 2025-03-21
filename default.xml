@@ -39,8 +39,9 @@
         <yawrate_limit>60</yawrate_limit>
 
         <!-- "ideal", "step", "local_velocity", "local_forces" -->
-        <planar_control>local_forces</planar_control>
+        <planar_control>inertial_velocity</planar_control>
         <step_planar>1.0</step_planar> 
+        <vel_limit>1.0 0.5</vel_limit>
 
         <!-- Sensors Sensibility: [bias, random standard deviation] -->
         <e_depth>0.0 0.0</e_depth> <!-- m -->

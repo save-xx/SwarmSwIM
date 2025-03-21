@@ -23,9 +23,6 @@ class Simulator():
         self.agents = []
         # if None is passed, use default
         if sim_xml==None: sim_xml="simulation.xml"
-        # initialize file agents
-        self.agents_from_file(sim_xml)
-
         # load enviroment parameters:
         self.environment = sim_functions.parse_envrioment_parameters(sim_xml)
         # initialize randomness 
@@ -33,6 +30,8 @@ class Simulator():
             self.rnd = np.random.default_rng(self.environment['seed'])
         else:
             self.rnd = np.random.default_rng()
+        # initialize file agents
+        self.agents_from_file(sim_xml)
 
         # initialize current classes:
         if self.environment['is_vortex_currents']:
@@ -52,7 +51,7 @@ class Simulator():
         ''' Load agents based on simulation XML specification'''
         data = sim_functions.parse_agents(sim_xml)
         for key, value in data.items():
-            self._add(Agent(key,0.1,value[0],value[1],value[2]))
+            self._add(Agent(key,0.1,value[0],value[1],value[2],self.environment['seed']))
 
     @property
     def Dt(self):
