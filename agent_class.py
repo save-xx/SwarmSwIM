@@ -6,12 +6,15 @@ DIR_FILE = os.path.dirname(__file__)
 
 class Agent():
     def __init__(self, name, Dt=0.1, initialPosition = np.array([0.0,0.0,0.0]), initialHeading = 0.0, agent_xml="default.xml",rng=None):
-        '''Agent Object: parameters
-        - name: (str) unique name 
-        - Dt: (float) time subdivision
-        - initialPosition: (array-like size 3) determining global position at start. Default [0,0,0]
-        - initialHeading: float: initial heading in degrees, default is 0.0 (North)
-        - agent_xml: filename of agent setting, default is default.xml'''
+        '''
+        Agent Object: parameters  
+        - name: (str) unique name   
+        - Dt: (float) time subdivision  
+        - initialPosition: (array-like size 3) determining global position at start. Default [0,0,0]  
+        - initialHeading: float: initial heading in degrees, default is 0.0 (North)  
+        - agent_xml: filename of agent setting, default is default.xml  
+        - rng: (int) random seed value
+        '''
         # private
         self._cmd_force = np.array([0.0,0.0])
         self._cmd_local_vel = np.array([0.0,0.0])
@@ -54,42 +57,38 @@ class Agent():
         return self._cmd_force
     @cmd_forces.setter
     def cmd_forces(self,input):
-        ''' Set force command:
-            accepts: numpy array, list , tuple, float
-            if the input is float, assume sway to be 0.0'''
-        if   type(input)==np.ndarray and 2==np.size(input):
-            self._cmd_force =  np.squeeze(input.astype('float'))
-        elif type(input) in (list,tuple) and 2==len(input):
-            self._cmd_force =  np.array(input).astype('float')
-        elif type(input)==int or type(input)==float:
-            self._cmd_force =  np.array([float(input),0.0])
-        elif np.issubdtype(type(input), np.floating):
-            self._cmd_force =  np.array([float(input),0.0])
-        else: raise ValueError('force command must be length 2 numpy array, 2 element list, tuple or a number.')
+        self._cmd_force = generic_input(input)
 
     @property
     def cmd_local_vel(self):
         return self._cmd_local_vel
     @cmd_local_vel.setter
     def cmd_local_vel(self,input):
-        # sanity checks
-        if   type(input)==np.ndarray and 2==np.size(input):
-            self._cmd_local_vel =  np.squeeze(input.astype('float'))
-        elif type(input)==list and 2==len(list):
-            self._cmd_local_vel =  np.array(input).astype('float')
-        elif type(input)==int or type(input)==float:
-            self._cmd_local_vel =  np.array([float(input),0.0])
-        else: raise ValueError('force command must be length 2 numpy array, 2 element list or a number.')
-
+        self._cmd_local_vel = generic_input(input)
 
     def parse_agent_parameters(self, local_path):
         ''' Read the xml file for the agents charateristics'''
+        # Utility
         #--------------------
         # Local Function - parsing of vectors and matrix from XML
         def parse_matrix(element):
             ''' Split the text into rows and then convert each row to a list of floats '''
             matrix = np.array([list(map(float, row.split())) for row in element.text.strip().split('\n')])
             return np.squeeze(matrix)
+        
+        def read_float_parameter(name,default_value):
+            ''' Given a string, create an attiribute with that name an populate'''
+            if sim_agent.find(name) is not None: # if found in the file, populate the variable
+                setattr(self,name,float(sim_agent.find(name).text))
+            else: setattr(self,name,float(default_value))
+
+        def read_2d_parameters(name):
+            ''' Given a string, create an attiribute with that name, 
+            and populate with corresponding values in xml if any
+            For parameters of 2 elements'''
+            if sim_agent.find(name) is not None: # if found in the file, populate the variable
+                setattr(self,name,parse_matrix(sim_agent.find(name)))
+            else: setattr(self,name,np.zeros(2))
         #--------------------
         # fix path if local or global
         if os.path.isabs(local_path): path = local_path
@@ -99,41 +98,47 @@ class Agent():
         sim_agent = root.find('sim_agent')
         if sim_agent is None: raise ValueError("The XML does not contain a <sim_agent> element.")
         #--------------------
-        # Parse required parameters
-        self.mass = float(sim_agent.find('mass').text)
-        self.added_mass = parse_matrix(sim_agent.find('added_mass'))
+        # Parse mass parameters
+        read_float_parameter('mass',1.0)
+        if sim_agent.find('added_mass') is not None: self.added_mass = parse_matrix(sim_agent.find('added_mass'))
+        else: self.added_mass = np.zeros([2,2])
         self.tot_mass = self.added_mass + np.array([[self.mass,0],[0,self.mass]])
-        self.quadratic_damping = parse_matrix(sim_agent.find('quadratic_damping'))
-        # Parse optional parameters
-        self.linear_damping = parse_matrix(sim_agent.find('linear_damping')) if sim_agent.find('linear_damping') is not None else np.zeros([2,2])
-        # Parse Control depth
+        # selection of control scheme [REQUIRED]
         self.depth_control = sim_agent.find('depth_control').text
-        if "step"        ==self.depth_control: self.step_depth = float(sim_agent.find('step_depth').text)
-        if "proportional"==self.depth_control: 
-            self.proportional_depth = float(sim_agent.find('proportional_depth').text)
-            self.heave_limit        = float(sim_agent.find('heave_limit').text)
-        # Parse Control heading
         self.heading_control = sim_agent.find('heading_control').text
-        if "step"        ==self.heading_control: self.step_heading = float(sim_agent.find('step_heading').text)
-        if "proportional"==self.heading_control: 
-            self.proportional_heading = float(sim_agent.find('proportional_heading').text)  
-            self.yawrate_limit        = float(sim_agent.find('yawrate_limit').text) 
-        # Parse Control planar
         self.planar_control = sim_agent.find('planar_control').text
-        if "step"==self.planar_control: self.step_planar= float(sim_agent.find('step_planar').text)
-        if "inertial_velocity"==self.planar_control:
-            self.vel_limit = parse_matrix(sim_agent.find('vel_limit'))
-        # Parse Navigation errors
-        self.e_depth     = parse_matrix(sim_agent.find('e_depth'))     if sim_agent.find('e_depth')     is not None else np.zeros(2)
-        self.e_heave     = parse_matrix(sim_agent.find('e_heave'))     if sim_agent.find('e_heave')     is not None else np.zeros(2)
-        self.e_heading   = parse_matrix(sim_agent.find('e_heading'))   if sim_agent.find('e_heading')   is not None else np.zeros(2)
-        self.e_yawrate   = parse_matrix(sim_agent.find('e_yawrate'))   if sim_agent.find('e_yawrate')   is not None else np.zeros(2)
-        self.e_position  = parse_matrix(sim_agent.find('e_position'))  if sim_agent.find('e_position')  is not None else np.zeros(2)
-        self.e_local_vel = parse_matrix(sim_agent.find('e_local_vel')) if sim_agent.find('e_local_vel') is not None else np.zeros(2)        
-        self.clock_drift = float(sim_agent.find('clock_drift').text) if sim_agent.find('clock_drift') is not None else 0
+        # Parse damping parameters < at least one is required >
+        if sim_agent.find('linear_damping') is not None: self.linear_damping = parse_matrix(sim_agent.find('linear_damping'))  
+        else: self.linear_damping = np.zeros([2,2])
+        if sim_agent.find('quadratic_damping') is not None:  self.quadratic_damping = parse_matrix(sim_agent.find('quadratic_damping'))
+        else: self.quadratic_damping = np.identity(2)
+        # Parse Control depth parameters
+        read_float_parameter('step_depth',0.0)
+        read_float_parameter('proportional_depth',0.0)
+        read_float_parameter('heave_limit',0.0)
+        # Parse Control heading
+        read_float_parameter('step_heading',0.0)
+        read_float_parameter('proportional_heading',0.0)
+        read_float_parameter('yawrate_limit',0.0)
+        # Parse Control planar
+        read_float_parameter('step_planar',0.0)
+        read_2d_parameters('vel_limit')
+        read_float_parameter('yawrate_limit',0.0)
+
+        # List of the names to be added in the noise parameters
+        list_of_noises = ['e_depth','e_heave','e_heading','e_yawrate',
+                          'e_position','e_local_vel','e_inertial_vel',
+                          'e_local_force']
+        # parse navigational noises
+        for name in list_of_noises:
+            read_2d_parameters(name)
+        # additional clock drift error
+        self.clock_drift = float(sim_agent.find('clock_drift').text) \
+                                if sim_agent.find('clock_drift') is not None \
+                                else 0
         ## TODO consider adding randomization
         #--------------------
-        # Parse Sensors
+        # Parse Sensors <- TODO consider delocating
         sensors_root = root.find('sensors')
         self.sensors={}
         if not (sensors_root is None):      #skip if not defined
@@ -156,13 +161,6 @@ class Agent():
                 self.sensors['ac_msg_length'] = float(acoustic_root.find('msg_length').text)
                 self.sensors['e_ac_range'] = parse_matrix(acoustic_root.find('e_ac_range')) if acoustic_root.find('e_ac_range') is not None else np.zeros(2)
                 self.sensors['e_ac_doppler']  = parse_matrix(acoustic_root.find('e_doppler'))  if acoustic_root.find('e_doppler')  is not None else np.zeros(2)
-        #--------------------
-        # # parse collisions
-        # collision_root = root.find('collisions')
-        # self.collision = {}
-        # if not (collision_root is None): #skip if not defined
-        #     self.collision['radius'] = float(collision_root.find('radius').text)
-        #     self.collision['height'] = float(collision_root.find('height').text)
 
 
     def emulate_error (self, data, error):
@@ -258,7 +256,7 @@ class Agent():
             self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
         elif "inertial_velocity"==self.planar_control:
             step = (self.Dt*self.vel_limit)
-            emulated_velocities = get_emulated_velocities()
+            emulated_velocities = get_emulated_velocities() #TODO correct noise
             ideal_x_pos = self.last_step_planar[0] + (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
             ideal_y_pos = self.last_step_planar[1] + (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
             # limitation of maximal velocity vector
@@ -312,11 +310,31 @@ class Agent():
         if 3==len(positionMeters): self.cmd_depth = positionMeters[3]
         if headingDegrees: self.cmd_heading = headingDegrees
 
+NUM_TYPES = (int, float, np.integer, np.floating) 
+def generic_input(input):
+    ''' returns a 2 element np.array of a generic input'''
+    # Handle np.arrays as inputs
+    if   isinstance(input,np.ndarray): 
+        if 2==np.size(input): return input.squeeze().astype('float')
+        elif 1 == np.size(input): return np.array([float(input),0.0])
+        else: raise ValueError(f'Input is of not accetable size, allowed 1 or 2, current {np.size(input)}')
+    # Handle lists
+    elif isinstance(input, (list, tuple)) and all(isinstance(x, NUM_TYPES) for x in input):
+        if len(input) == 2: return np.array(input).astype('float')
+        elif len(input) == 1: return np.array([float(input[0]),0.0])
+        else: raise ValueError(f'Input is of not accetable size, allowed 1 or 2, current {len(input)}')
+    # Handle single numbers
+    elif isinstance(input, NUM_TYPES):
+        return np.array([float(input),0.0])
+    else: raise ValueError('Input type or length incorrect')
+
 if __name__ == '__main__':
     A1 = Agent("A1",0.1)
     A1.cmd_forces = np.array([1,0])
     A1.cmd_depth = 0.0
     A1.cmd_heading = 0
+    print(A1.mass)
+    print(A1.e_inertial_vel)
     for i in range(30):
         A1.tick()
         # if i%10==0: print(f'{A1.pos[0]:.6f}, {A1.psi:.6f}')

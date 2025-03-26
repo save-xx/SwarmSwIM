@@ -14,7 +14,7 @@ S = Simulator(1/24)
 # set inital agents command
 for agent in S.agents:
     agent.cmd_forces= 0.3
-
+    agent.cmd_local_vel= 0.3
 
 # initate detection and animator classes
 Detection = CNNDetection()
