@@ -232,6 +232,9 @@ class Agent():
         def get_emulated_velocities():
             return [self.emulate_error( self.cmd_local_vel[0],self.e_local_vel),
                     self.emulate_error(-self.cmd_local_vel[1],self.e_local_vel)]
+        def get_emulated_inertial():
+            return [self.emulate_error( self.cmd_local_vel[0],self.e_inertial_vel),
+                    self.emulate_error(-self.cmd_local_vel[1],self.e_inertial_vel)]
         ## calculate correction and angles
         x_correction = self.cmd_planar[0]-self.measured_pos[0]
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
@@ -256,7 +259,7 @@ class Agent():
             self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
         elif "inertial_velocity"==self.planar_control:
             step = (self.Dt*self.vel_limit)
-            emulated_velocities = get_emulated_velocities() #TODO correct noise
+            emulated_velocities = get_emulated_inertial() 
             ideal_x_pos = self.last_step_planar[0] + (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
             ideal_y_pos = self.last_step_planar[1] + (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
             # limitation of maximal velocity vector
@@ -268,8 +271,10 @@ class Agent():
         elif "local_forces"==self.planar_control:
             # NED convention
             # TODO Add effective Forces and e_forces
-            external_forces = np.array([ self.cmd_forces[0]+self.other_forces[0],
-                                        -self.cmd_forces[1]-self.other_forces[1]])
+            real_actuation = [self.emulate_error( self.cmd_forces[0],self.e_local_force),
+                              self.emulate_error(-self.cmd_forces[1],self.e_local_force)]
+            external_forces = np.array([ real_actuation[0]+self.other_forces[0],
+                                        -real_actuation[1]-self.other_forces[1]])
             F_tot = (external_forces +
                      np.matmul(self.linear_damping, self.incurrent_velocity)+
                      np.matmul(self.quadratic_damping,abs(self.incurrent_velocity)*self.incurrent_velocity)

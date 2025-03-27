@@ -39,7 +39,7 @@
         <yawrate_limit>60</yawrate_limit>
 
         <!-- "ideal", "step", "local_velocity","inertial_velocity", "local_forces" -->
-        <planar_control>inertial_velocity</planar_control>
+        <planar_control>local_forces</planar_control>
         <step_planar>1.0</step_planar> 
         <vel_limit>1.0 0.5</vel_limit>
 
