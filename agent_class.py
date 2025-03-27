@@ -32,6 +32,7 @@ class Agent():
         if not rng: self.rnd = np.random.default_rng()
         else: self.rnd = np.random.default_rng(hash(name)%2**20 + rng)
         # Load agent parameters from xml
+        self.agent_type = agent_xml
         self.parse_agent_parameters(agent_xml)
         # Parameter initialization
         self.internal_clock= 0.0
@@ -136,19 +137,19 @@ class Agent():
         self.clock_drift = float(sim_agent.find('clock_drift').text) \
                                 if sim_agent.find('clock_drift') is not None \
                                 else 0
-        ## TODO consider adding randomization
+        ## TODO consider adding bias randomization
         #--------------------
         # Parse Sensors <- TODO consider delocating
         sensors_root = root.find('sensors')
         self.sensors={}
         if not (sensors_root is None):      #skip if not defined
-        # NN Detector
+            # NN Detector
             detector_root = sensors_root.find('NNDetector')
             if detector_root:
                 self.sensors['NNDetector']={'period': float(detector_root.find('period').text)}
                 self.sensors['NNDetector']['field_of_view']= parse_matrix(detector_root.find('field_of_view'))
                 self.sensors['NNDetector']['visibility_model'] = detector_root.find('visibility_model').text
-                if "linear"== self.sensors['NNDetector']['visibility_model']:
+                if detector_root.find('points') is not None:
                     self.sensors['NNDetector']['points'] = parse_matrix(detector_root.find('points'))
                 #Parse Sensor errors
                 self.sensors['e_NND_distance'] = parse_matrix(detector_root.find('e_distance')) if detector_root.find('e_distance') is not None else np.zeros(2)
@@ -156,6 +157,7 @@ class Agent():
                 self.sensors['e_NND_beta'] =    parse_matrix(detector_root.find('e_beta'))      if detector_root.find('e_beta')     is not None else np.zeros(2)
                 # add detector element
                 self.NNDetector={'time_lapsed': self.rnd.uniform(0,self.sensors['NNDetector']['period'])}
+            # Acustic Channel
             acoustic_root = sensors_root.find('Acoustic_Ranging')
             if acoustic_root:
                 self.sensors['ac_msg_length'] = float(acoustic_root.find('msg_length').text)
