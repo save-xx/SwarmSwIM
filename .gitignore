@@ -167,5 +167,8 @@ Windows/
 Linux/
 # Ignore the testing folder, if any
 testing/
+# Ingnore installation files
+SwarmSwIM.egg-info
 # ignore __pychache subfolders
-sensors/__pycache__
+SwarmSwIM/__pycache__
+SwarmSwIM/sensors/__pycache__

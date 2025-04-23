@@ -1,5 +1,3 @@
-# from sim_class import Simulator
-# from agent_class import Age
 import numpy as np
 
 class AcousticChannel:

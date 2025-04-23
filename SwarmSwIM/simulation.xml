@@ -92,7 +92,7 @@
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->
                 0.0  0.0  69.0  10.0
-                2.0  0.0  69.0  10.0
+                2.0  0.0  69.0  180.0
                 <!-- Add more lines to add agents -->
             </state>
         </agent_type>
