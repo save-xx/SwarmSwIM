@@ -13,7 +13,7 @@
         Parameters are: 
             Frequency [Hz]: determines the period of each disturbance 
             Intensity [m/s]: determines the maximal intensity of noise current -->
-        <noise_currents> 0.5 0.3 </noise_currents>
+        <noise_currents> 0.0 0.0 </noise_currents>
 
         <!-- Define vorticity field current -->
         <!-- Adds time-constant, location-dependent randomized current.
@@ -29,11 +29,11 @@
             <!-- Add each contribution separately -->
             <wave1>
                 <!-- Peak intensity in m/s -->
-                <amplitude> 0.0 </amplitude> 
+                <amplitude> 0.6 </amplitude> 
                 <!-- Wave frequency in Hz -->
                 <frequency> 0.0 </frequency>
                 <!-- Direction of wave current [degree] -->
-                <direction> 0.0 </direction>
+                <direction> 90.0 </direction>
                 <!-- Time shift of wave normalized [0,2pi] -->
                 <shift> 0.0 </shift>
             </wave1>
@@ -92,7 +92,7 @@
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->
                 0.0  0.0  69.0  10.0
-                2.0  0.0  69.0  10.0
+                2.0  0.0  69.0  180.0
                 <!-- Add more lines to add agents -->
             </state>
         </agent_type>
@@ -110,5 +110,9 @@
 
 
     </agents>
+
+    <seed>
+        111 
+    </seed>
 
 </data>

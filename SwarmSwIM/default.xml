@@ -38,17 +38,20 @@
         <proportional_heading>1.0</proportional_heading>
         <yawrate_limit>60</yawrate_limit>
 
-        <!-- "ideal", "step", "local_velocity", "local_forces" -->
+        <!-- "ideal", "step", "local_velocity","inertial_velocity", "local_forces" -->
         <planar_control>local_forces</planar_control>
         <step_planar>1.0</step_planar> 
+        <vel_limit>1.0 0.5</vel_limit>
 
         <!-- Sensors Sensibility: [bias, random standard deviation] -->
-        <e_depth>0.0 0.0</e_depth> <!-- m -->
+        <e_depth>0.0 0.1</e_depth> <!-- m -->
         <e_heave>0.0 0.0</e_heave> <!-- m/s -->
         <e_heading>0.0 0.0</e_heading> <!-- deg -->
         <e_yawrate>0.0 0.0</e_yawrate> <!-- deg/s -->
         <e_position>0.0 0.0</e_position> <!-- m -->
         <e_local_vel>0.0 0.0</e_local_vel> <!-- m/s -->
+        <e_inertial_vel>0.0 0.0</e_inertial_vel> <!-- m/s -->
+        <e_local_force>0.0 0.0</e_local_force> <!-- N -->
         <clock_drift>0.0</clock_drift> <!-- PPM -->
         
     </sim_agent>
@@ -89,12 +92,5 @@
 
 
     </sensors>
-
-    <!-- Add collision proprieties -->
-    <collisions>
-        <!-- collision box (cylinder) dimentions in meters  -->
-        <radius>0.2</radius>
-        <height>0.25</height>
-    </collisions>
 
 </data>

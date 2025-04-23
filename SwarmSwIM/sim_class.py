@@ -1,31 +1,38 @@
 import numpy as np
 import copy
-
-from agent_class import Agent
-import sim_functions
+from .agent_class import Agent
+from . import sim_functions
 
 # Short term history memory of all agents, to consider acoustic effects
 HISTORY_MEMORY = 2 # seconds
 C_SOUND = 1500 # m/s
-SEED = 111 # random initialization
 
 class Simulator():
-    def __init__(self,Dt,sim_xml="simulation.xml"):
+    def __init__(self, timeSubdivision, sim_xml="simulation.xml"):
+        '''
+        Simulation Object
+        - timeSubdivision: (float), unit in seconds, time interval used for each simulation step.
+        - sim_xml: (string) name of XML file describing the simulation parameters
+        '''
         self._Dt = 0
         self._hist_length = 2 # minimum length
-        self.rnd = np.random.RandomState(SEED)
 
         self.time = 0
-        self.Dt = Dt
+        self.Dt = timeSubdivision
         self.history = {}
         self.agents = []
         # if None is passed, use default
         if sim_xml==None: sim_xml="simulation.xml"
+        # load enviroment parameters:
+        self.environment = sim_functions.parse_envrioment_parameters(sim_xml)
+        # initialize randomness 
+        if self.environment['seed']:
+            self.rnd = np.random.default_rng(self.environment['seed'])
+        else:
+            self.rnd = np.random.default_rng()
         # initialize file agents
         self.agents_from_file(sim_xml)
 
-        # load enviroment parameters:
-        self.environment = sim_functions.parse_envrioment_parameters(sim_xml)
         # initialize current classes:
         if self.environment['is_vortex_currents']:
             self.vortex_field =  sim_functions.VortexField(
@@ -41,19 +48,20 @@ class Simulator():
             )
         
     def agents_from_file(self,sim_xml):
+        ''' Load agents based on simulation XML specification'''
         data = sim_functions.parse_agents(sim_xml)
         for key, value in data.items():
-            self._add(Agent(key,0.1,value[0],value[1],value[2]))
+            self._add(Agent(key,0.1,value[0],value[1],value[2],self.environment['seed']))
 
     @property
     def Dt(self):
         return self._Dt
-
     @Dt.setter
     def Dt(self,input):
         self._Dt = input
         self._hist_length = max(2,int(np.ceil(HISTORY_MEMORY/input))) # minimum 2 cells
 
+    # Internal methods to add or remove a single agent from the simulation
     def _add(self, new_agent):   
         ''' Private function Add an Agent to the simulation ''' 
         # add new agent to list
@@ -71,7 +79,6 @@ class Simulator():
         self.agents[-1].Dt = self.Dt
         # initialize history (assume no movment in the past)
         self.history[new_agent.name] = [copy.deepcopy(self.agents[-1].pos)]*self._hist_length
-
     def _remove(self,new_agent):
         if not type(new_agent) == Agent:
             print("ERROR: only Agent type object can be removed, operation aborted")
@@ -82,6 +89,7 @@ class Simulator():
         self.agents.remove(new_agent)
         del self.history[new_agent.name]
 
+    # Methods to add or remove agent(s) from the simulation
     def remove(self,*args):
         ''' iterate  on add args to remove each agent individually'''
         # direct to single entries    
@@ -95,19 +103,22 @@ class Simulator():
         if args: 
             for agent in args: 
                 self._add(agent)
-        
+    #------------------
+
+    ## Execution function ##
     def tick(self):
         ''' execute a step of simulation for all the loaded agents'''
         # update time
         self.time += self.Dt
+        # add current disturbances
+        self.calculate_currents()
         # execute physiscs
         for agent in self.agents:
             agent.tick()
-        # add current disturbances
-        self.calculate_currents()
         # update the short term memory of positions
         self.update_history()
 
+    # Subfunction of the main tick
     def update_history(self):
         ''' keep a record of all positions in the last HISTORY_MEMORY seconds '''
         for agent in self.agents:
@@ -151,13 +162,15 @@ class Simulator():
             # add space dependant disturbances
             agent.pos += np.append(local_current,0)*self.Dt
 
-    def rel_pos(self,A,B):
-        ''' measure relative distance of 2 agents, as vector A to B'''
+    def rel_pos(self, A : Agent, B :Agent):
+        ''' Measure relative distance of 2 agents (A and B), as vector A to B'''
         return (B.pos-A.pos)
     
-    def acoustic_range(self,A,B):
-        ''' return  the acoustic range, measured in A. A in the current time instance
-        and B, in a past instance, relative to when the acoustic message was initated'''
+    def acoustic_range(self, A : Agent, B :Agent):
+        ''' 
+        Return the acoustic range between 2 agents (A and B), measured in A.  
+        Accounts for Time of Flight between A and B.
+        '''
         d0 = np.linalg.norm(self.rel_pos(A,B))
         delay_seconds= d0/C_SOUND
         if delay_seconds>=HISTORY_MEMORY: raise MemoryError ("The ditance delays exeed the history memory, \
@@ -168,16 +181,18 @@ class Simulator():
         measured_distance = A.emulate_error( perfect_distance, A.sensors['e_ac_range'] )   # Added measurment
         return measured_distance
 
-    def OWTT_acoustic_range(self,A,B):
-        ''' return the One Way Time Traver Ranging accounting for clock drift'''
+    def OWTT_acoustic_range(self, A : Agent, B :Agent):
+        ''' Returns the One Way Time Traver Ranging, accounting for clock drift error'''
         ideal_range = self.acoustic_range(A,B)
         drift_variance = (A.internal_clock - B.internal_clock) * C_SOUND
         return ideal_range + drift_variance
 
     def doppler(self,A,B):
-        ''' return doppler shift as velocity. 
-        msg_dt is the transmission time of the message
-        doppler is considered measured in A - only for long range
+        ''' 
+        Returns  the velocity component projected on the AB axis, as if estimated via acoustic Doppler shift.
+        - A and B: Agent instances  
+        - Measurament obtaines as if captured in A  
+        - Accounts for message time duration, averaging the measurament on the time interval.
         '''
         msg_dt = A.sensors['ac_msg_length']
         ## Approxiate length in messages (minimum 2 considered)
