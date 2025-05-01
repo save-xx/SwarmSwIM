@@ -34,7 +34,7 @@ The installation is done through pip as follow
 
 in the `SwarmSwIM` folder:  
 ```bash
-cd ~<path to package>/SwarmSwIM/ # 
+cd ~<path to package>/SwarmSwIM/ # Go to download folder
 ```
 Install SwarmSwIM as python pakage
 
@@ -48,6 +48,12 @@ Successfully built SwarmSwIM
 Installing collected packages: SwarmSwIM
 Successfully installed SwarmSwIM-x.x.x
 ```
+
+To Uninstall the package simply:
+```bash
+pip uninstall SwarmSwIM
+```
+Note that the dependace package will not be unistalled (`numpy`, `matplotlib`, etc..)
 
 <!-- 
 LEGACY
