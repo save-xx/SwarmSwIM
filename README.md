@@ -20,24 +20,36 @@ Additionally **SimAPI** requires additional packages to interconnect with UE5:
 - **API functionality**: `fastapi`, `uvicorn`
 - **Image processing**: `opencv-python`
 
-Install dependencies with:
-```bash
-pip install numpy matplotlib
-pip install fastapi uvicorn opencv-python
-```
 
 Note that the installation will handle all the dependacy installations.
 
 ## Installation
 The package can be installed Globally to be accessible regardless the location.
-The installation is done through pip as follow
 
+---
+#### Generic installation
+For a generic installation, just run: 
+```bash
+pip install git+https://github.com/save-xx/SwarmSwIM.git
+```
+Note that you will not be able to alter the code.
+
+---
+#### Dev installation
+For a developer (editable) installation:
+
+Clone the repository in a Folder of your choice:
+```bash
+git clone ttps://github.com/save-xx/SwarmSwIM.git
+```
+
+Enter the folder that has been cloned
 in the `SwarmSwIM` folder:  
 ```bash
-cd ~<path to package>/SwarmSwIM/ # Go to download folder
+cd SwarmSwIM/ # Go to download folder
 ```
-Install SwarmSwIM as python pakage
-
+  
+Install SwarmSwIM as python pakage, `-e` indicates that is editable.
 ```bash
 pip install -e .
 ```
@@ -49,11 +61,22 @@ Installing collected packages: SwarmSwIM
 Successfully installed SwarmSwIM-x.x.x
 ```
 
+---
+#### Uninstall
+
+If you want to install the dependancies manually:
+
+```bash
+pip install numpy matplotlib
+pip install fastapi uvicorn opencv-python
+```
+
+
 To Uninstall the package simply:
 ```bash
 pip uninstall SwarmSwIM
 ```
-Note that the dependace package will not be unistalled (`numpy`, `matplotlib`, etc..)
+> Note: Dependace installed with the package will not be automatically unistalled (`numpy`, `matplotlib`, etc..). Due to `opencv-python`, the installation will require `numpy` < 2.0.
 
 <!-- 
 LEGACY
@@ -93,10 +116,10 @@ To Set you own simulation:
 ### Simulation Example 
 ```python
 from SwarmSwIM import Simulator, CNNDetection
-time_step = 1 / 24  # Simulation time step in seconds
+TIME_STEP = 1 / 24  # Simulation time step in seconds
 
 # Initialize the simulator with the chosen time step
-S = Simulator(time_step)
+S = Simulator(TIME_STEP)
 
 # Initialize a sensor model (e.g., CNN-based detection)
 Detection = CNNDetection()
@@ -113,13 +136,13 @@ This code runs the simulator in discrete steps until the specified condition is 
 ### Minimal animation
 The animator2D provides a simple representation of the agents on the planar position and heading of each agent. Within comutational capabilites of the hosting machine and simulation complexity, the animator will run the simulation in real-time. A code example of the minimal animation can be found in the file `example2Danimation.py`.
 
-With the PAckage installed, to launch the example input:
+With the Package installed, from the SwarmSwIM folder, launch the example:
 ```bash
 python3 -m SwarmSwIM.example2Danimation
 ```
 
 ## ROS2 Implementation
-Install the core as above and then refer to [swarmswimros](https://github.com/save-xx/swarmswimros)
+This simulator is also avaiable for ROS2 implementation. The ROS2 impementation is designed as a stand-alone module based on this core. It will __not__ require the core installation, since it is already designed with the simulator locally in-build. For information on the installation and use please check-out the ros2 swarmswim repo at:  [swarmswimros](https://github.com/save-xx/swarmswimros)
 
 ## Unreal Engine: Simulation [EXPERIMENTAL - STILL UNDER DEV]
 Two files are added to give you the possibility to simulate a 3D marine environment. Use the sample project that is shared in the 'UE5_sim' folder as a sample. 
@@ -139,3 +162,7 @@ Launch as requested here in order to avoid crashing of UE5 environment!
 ### Downloads 
 [UE5 SwarmSim for Linux (Ubuntu)](https://drive.google.com/uc?export=download&id=16G_9QRhCBSX7UGSws5W-YAe6_rQ6eY0m)  
 [UE5 SwarmSim for Windows](https://drive.google.com/uc?export=download&id=1Jm6av7dfeh0tLGYfWLKlqPPpbLTuIgow)  
+
+
+## Wiki
+For more details, check out the [Wiki](https://github.com/save-xx/SwarmSwIM/wiki).

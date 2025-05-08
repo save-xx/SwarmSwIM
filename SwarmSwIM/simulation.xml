@@ -99,13 +99,13 @@
 
 
         <!-- Uncomment to add different type of agents
-        <agent_type> 
+        <agent_type2> 
             <description>your_file.xml</description>
             <name>B</name>
             <state>
                 0.0  0.0  0.0  0.0
             </state>
-        </agent_type> 
+        </agent_type2> 
         -->
 
 
