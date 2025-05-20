@@ -40,7 +40,7 @@ For a developer (editable) installation:
 
 Clone the repository in a Folder of your choice:
 ```bash
-git clone ttps://github.com/save-xx/SwarmSwIM.git
+git clone https://github.com/save-xx/SwarmSwIM.git
 ```
 
 Enter the folder that has been cloned
