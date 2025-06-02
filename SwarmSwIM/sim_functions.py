@@ -3,7 +3,7 @@ import numpy as np
 import os
 
 DIR_FILE = os.path.dirname(__file__)
-
+LOCAL_FILE = os.getcwd()
 ########### XML PARSING FUNCTIONS ###########
 
 def parse_matrix(element):
@@ -11,13 +11,23 @@ def parse_matrix(element):
     matrix = np.array([list(map(float, row.split())) for row in element.text.strip().split('\n')])
     return np.squeeze(matrix)
 
-def parse_envrioment_parameters(local_path):
+def get_sim_xml_path(input_path):
+    """Return absolute part of sim xml file"""
+    if os.path.isabs(input_path): 
+        path = input_path
+    elif os.path.isfile(os.path.join(LOCAL_FILE, input_path)):
+        path = os.path.join(LOCAL_FILE, input_path)
+    else: 
+        print ("No reference of sim xml found locally, using package directory")
+        path = os.path.join(DIR_FILE, input_path)
+    return path
+
+def parse_envrioment_parameters(input_path):
     ''' unpack and return xml parameters for current settings'''
     data = {}
     data['global_waves']=[]
     data['local_waves']=[]
-    if os.path.isabs(local_path): path = local_path
-    else: path = os.path.join(DIR_FILE,local_path)
+    path = get_sim_xml_path(input_path)
 
     tree = ET.parse(path)
     root = tree.getroot()
@@ -92,12 +102,10 @@ def parse_envrioment_parameters(local_path):
     # return structure with all unpacked data
     return data
 
-def parse_agents(local_path):
+def parse_agents(input_path):
     ''' unpack and return parameters for adding agents'''
     data = {}
-    # check if the path is local or global
-    if os.path.isabs(local_path): path = local_path
-    else: path = os.path.join(DIR_FILE,local_path)
+    path = get_sim_xml_path(input_path)
     tree = ET.parse(path)
     root = tree.getroot()
     agents_root = root.find('agents')
@@ -116,7 +124,6 @@ def parse_agents(local_path):
                 name = f"{nametype}{i+1:02}"
                 data[name]=[state[0:3],state[3],filename]
     return data
-
 
 ########### CURRENT SIMULATION CLASSES AND FUNCTIONS ###########
 
