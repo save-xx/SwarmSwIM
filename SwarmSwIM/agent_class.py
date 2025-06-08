@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import os
 
 DIR_FILE = os.path.dirname(__file__)
+LOCAL_FILE = os.getcwd()
 
 
 class Agent():
@@ -81,7 +82,7 @@ class Agent():
     def cmd_local_vel(self, input):
         self._cmd_local_vel = generic_input(input)
 
-    def parse_agent_parameters(self, local_path):
+    def parse_agent_parameters(self, input_path):
         """Read the xml file for the agents charateristics."""
         # Utility
         # --------------------
@@ -110,12 +111,20 @@ class Agent():
                 setattr(self, name, parse_matrix(sim_agent.find(name)))
             else:
                 setattr(self, name, np.zeros(2))
+
+        def get_xml_path(input_path):
+            """Return absolute part of sim xml file"""
+            if os.path.isabs(input_path): 
+                path = input_path
+            elif os.path.isfile(os.path.join(LOCAL_FILE, input_path)):
+                path = os.path.join(LOCAL_FILE, input_path)
+            else: 
+                print ("No reference of agent xml found locally, using package directory")
+                path = os.path.join(DIR_FILE, input_path)
+            return path
         # --------------------
-        # fix path if local or global
-        if os.path.isabs(local_path): 
-            path = local_path
-        else:
-            path = os.path.join(DIR_FILE, local_path)
+
+        path = get_xml_path(input_path)
         tree = ET.parse(path)
         root = tree.getroot()
         sim_agent = root.find('sim_agent')

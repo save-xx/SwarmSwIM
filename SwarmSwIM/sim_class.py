@@ -3,6 +3,7 @@ import copy
 from .agent_class import Agent
 from . import sim_functions
 
+
 # Short term history memory of all agents, to consider acoustic effects
 HISTORY_MEMORY = 2 # seconds
 C_SOUND = 1500 # m/s
