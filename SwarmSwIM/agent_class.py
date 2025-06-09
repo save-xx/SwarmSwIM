@@ -279,17 +279,19 @@ class Agent():
     def update_planar(self, Dt):
         """Tick based update of the planar position."""
         def get_emulated_velocities():
-            return [self.emulate_error(self.cmd_local_vel[0], self.e_local_vel),
-                    self.emulate_error(-self.cmd_local_vel[1], self.e_local_vel)]
+            return np.array([self.emulate_error(self.cmd_local_vel[0], self.e_local_vel),
+                    self.emulate_error(-self.cmd_local_vel[1], self.e_local_vel)])
 
         def get_emulated_inertial():
-            return [self.emulate_error(self.cmd_local_vel[0], self.e_inertial_vel),
-                    self.emulate_error(-self.cmd_local_vel[1], self.e_inertial_vel)]
+            return np.array([self.emulate_error(self.cmd_local_vel[0], self.e_inertial_vel),
+                    self.emulate_error(-self.cmd_local_vel[1], self.e_inertial_vel)])
+        
         # calculate correction and angles
         x_correction = self.cmd_planar[0]-self.measured_pos[0]
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
         sinpsi = np.sin(np.deg2rad(self.psi))
         cospsi = np.cos(np.deg2rad(self.psi))
+        R_mat = np.array(((cospsi,sinpsi),(-sinpsi,cospsi)))
 
         if "ideal" == self.planar_control:
             self.pos[0] += x_correction
@@ -307,20 +309,23 @@ class Agent():
             emulated_velocities = get_emulated_velocities()
             self.pos[0] += (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
             self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
+
         elif "inertial_velocity" == self.planar_control:
-            step = (self.Dt*self.vel_limit)
-            emulated_velocities = get_emulated_inertial() 
-            ideal_x_pos = self.last_step_planar[0] + (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
-            ideal_y_pos = self.last_step_planar[1] + (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
-            # limitation of maximal velocity vector
-            if abs(ideal_x_pos-self.pos[0]) < step[0]:
-                self.pos[0] = ideal_x_pos
-            else:
-                self.pos[0] += np.copysign(step[0], ideal_x_pos-self.pos[0])
-            if abs(ideal_y_pos-self.pos[1]) < step[1]:
-                self.pos[1] = ideal_y_pos
-            else:
-                self.pos[1] += np.copysign(step[1], ideal_y_pos-self.pos[1])
+            step = (self.Dt * self.vel_limit)
+            emulated_velocities = get_emulated_inertial()
+            # current effect in the last step, in body axis
+            current_disturbance = self.pos[0:2] - self.last_step_planar 
+            current_disturbance_body = R_mat.transpose() @ current_disturbance
+            # real tranlation on the plane required by the controller, body frame
+            real_translation = emulated_velocities * self.Dt - current_disturbance_body
+            # thresholding based on velocity limit
+            if abs(real_translation[0]) - step[0] > 0:
+                real_translation[0] = np.copysign(step[0], real_translation[0])
+            if abs(real_translation[1]) - step[1] > 0:
+                real_translation[1] = np.copysign(step[1], real_translation[1])
+            # apply thresholded velocity correction
+            self.pos[0] += (real_translation[0] * cospsi + real_translation[1] * sinpsi)
+            self.pos[1] += (real_translation[0] * sinpsi - real_translation[1] * cospsi)
 
         elif "local_forces" == self.planar_control:
             # NED convention
@@ -411,6 +416,7 @@ def generic_input(input):
 
 if __name__ == '__main__':
     A1 = Agent("A1", 0.1)
+    A1.planar_control = "inertial_velocity"
     A1.cmd_forces = np.array([1, 0])
     A1.cmd_depth = 0.0
     A1.cmd_heading = 0
@@ -418,4 +424,4 @@ if __name__ == '__main__':
     print(A1.e_inertial_vel)
     for i in range(30):
         A1.tick()
-        # if i%10==0: print(f'{A1.pos[0]:.6f}, {A1.psi:.6f}')
+        if i%10==0: print(f'{A1.pos[0]:.6f}, {A1.psi:.6f}')
