@@ -134,7 +134,7 @@ class UE5_API:
 if __name__=="__main__":
 
     ## Standalone Imports
-    from sim_class import Simulator
+    from .sim_class import Simulator
     import argparse
 
     # If exist get the --xml argument to specify the simulation file to use
