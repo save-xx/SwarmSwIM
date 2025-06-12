@@ -291,7 +291,7 @@ class Agent():
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
         sinpsi = np.sin(np.deg2rad(self.psi))
         cospsi = np.cos(np.deg2rad(self.psi))
-        R_mat = np.array(((cospsi,sinpsi),(-sinpsi,cospsi)))
+        R_mat = np.array(((cospsi,sinpsi),(sinpsi,-cospsi)))
 
         if "ideal" == self.planar_control:
             self.pos[0] += x_correction
@@ -316,6 +316,7 @@ class Agent():
             # current effect in the last step, in body axis
             current_disturbance = self.pos[0:2] - self.last_step_planar 
             current_disturbance_body = R_mat.transpose() @ current_disturbance
+            # current_disturbance_body[1] *= -1
             # real tranlation on the plane required by the controller, body frame
             real_translation = emulated_velocities * self.Dt - current_disturbance_body
             # thresholding based on velocity limit

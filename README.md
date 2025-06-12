@@ -1,5 +1,9 @@
-# Underwater Swarm Simulator 
+# SwarmSwIM: an Underwater Swarm Simulator 
 This is a Python3-based simulator designed for modeling multi-robot and swarm systems. It implements a simplified motion model, with an assumed level of low level control already acting on the simulated agents rather than calculating the full-body dynamics. This approach allows the simulator to efficiently handle a large number of agents simultaneously.
+
+**Related repositories**
+- [swarmswim examples](https://github.com/save-xx/swarmswim_examples)
+- [swarmswimros](https://github.com/save-xx/swarmswimros)
 
 ## Features
 
@@ -140,6 +144,9 @@ With the Package installed, from the SwarmSwIM folder, launch the example:
 ```bash
 python3 -m SwarmSwIM.example2Danimation
 ```
+
+## More Examples
+In the [swarmswim examples](https://github.com/save-xx/swarmswim_examples) are stored more examples, showcasing the different functionalities as well as full case scenarios and examples of uses of SwarmSwIM.
 
 ## ROS2 Implementation
 This simulator is also avaiable for ROS2 implementation. The ROS2 impementation is designed as a stand-alone module based on this core. It will __not__ require the core installation, since it is already designed with the simulator locally in-build. For information on the installation and use please check-out the ros2 swarmswim repo at:  [swarmswimros](https://github.com/save-xx/swarmswimros)
