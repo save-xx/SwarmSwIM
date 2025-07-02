@@ -22,8 +22,8 @@ class Simulator():
         self.Dt = timeSubdivision
         self.history = {}
         self.agents = []
-        # if None is passed, use default
-        if sim_xml==None: sim_xml="simulation.xml"
+
+        self._simulation_filepath = sim_functions.get_sim_xml_path(sim_xml)
         # load enviroment parameters:
         self.environment = sim_functions.parse_envrioment_parameters(sim_xml)
         # initialize randomness 
@@ -80,6 +80,7 @@ class Simulator():
         self.agents[-1].Dt = self.Dt
         # initialize history (assume no movment in the past)
         self.history[new_agent.name] = [copy.deepcopy(self.agents[-1].pos)]*self._hist_length
+
     def _remove(self,new_agent):
         if not type(new_agent) == Agent:
             print("ERROR: only Agent type object can be removed, operation aborted")

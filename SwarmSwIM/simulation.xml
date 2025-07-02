@@ -13,15 +13,24 @@
         Parameters are: 
             Frequency [Hz]: determines the period of each disturbance 
             Intensity [m/s]: determines the maximal intensity of noise current -->
-        <noise_currents> 0.0 0.0 </noise_currents>
+        <noise_currents> 
+            <frequency>0.0</frequency> 
+            <intensity>0.0</intensity>
+        </noise_currents>
 
         <!-- Define vorticity field current -->
         <!-- Adds time-constant, location-dependent randomized current.
         This method emulates large-scale field turbulence. 
         Parameters are: 
             Density [vortexes/100m^2]
-            Intensity [m/s]: -->
-        <vortex_currents> 0 0.0 </vortex_currents>
+            Intensity [m/s]
+            size [m] 
+        -->
+        <vortex_currents>
+            <density>0</density>
+            <intensity>0.0</intensity>
+            <size>100.0</size>
+        </vortex_currents>
 
         <!-- Define wave sinusoidal current, Global -->
         <!-- Globally applied, sinusoidal time-dependent noise -->

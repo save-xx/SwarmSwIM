@@ -13,6 +13,8 @@ def parse_matrix(element):
 
 def get_sim_xml_path(input_path):
     """Return absolute part of sim xml file"""
+    if input_path == None: 
+        path = "simulation.xml"
     if os.path.isabs(input_path): 
         path = input_path
     elif os.path.isfile(os.path.join(LOCAL_FILE, input_path)):
