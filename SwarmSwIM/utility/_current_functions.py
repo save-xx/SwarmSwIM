@@ -48,15 +48,13 @@ class VortexField:
 
 class TimeNoise:
     """Generate time based, space independent noise for each agent, with set frequency."""
-    def __init__(self,time,freq=1.0,intensity=0.2,rng = np.random.default_rng()) -> None:
-        # seed for repetable random
-        self.rng = rng
+    def __init__(self, time, freq=1.0,intensity=0.2,rng = None) -> None:
+        self.rng = rng if rng is not None else np.random.default_rng()
         # set timer
         self.time = time
+        self.t_min1 = time
         self.Tslot = 1/freq
         self.intensity = intensity
-        # add each agent memory
-        self.noises = {}
 
     def random_vector(self):
         """Generate a random vector."""
@@ -64,27 +62,27 @@ class TimeNoise:
         ang = self.rng.uniform(0,2*np.pi)
         return np.array([mag*np.cos(ang),mag*np.sin(ang)])
 
-    def init_agent(self,agent):
-        ''' add a new agent to the memory of noises'''
-        self.noises[agent.name] = np.array([self.random_vector(),self.random_vector()])
-
-    def throttle(self, now):
-        if now - self.time <= self.Tslot: return
-        # update timer
-        self.time = now
-        # update all existing noises 
-        for key, item in self.noises.items():
-            self.noises[key] = np.array([item[1], self.random_vector()])
-
+    def init_noise(self):
+        return np.array([self.random_vector(),self.random_vector()])
+    
     def calculate_noises(self, now, agent):
-        # update all noises if needed
-        self.throttle(now)
-        # initialize any missing agent
-        if not agent.name in self.noises:
-            self.init_agent(agent)
+        # initialize any missing agent.
+        if not hasattr(agent, "current_noise"):
+            setattr(agent, "current_noise", self.init_noise())
         # linear interpolate on time
-        t = (now-self.time)/self.Tslot
-        current = (1-t)*self.noises[agent.name][0] + t*self.noises[agent.name][1]
+        t = (now - self.time) / self.Tslot
+        current = (1 - t) * agent.current_noise[0] + t * agent.current_noise[1]
+
+        # do once when the sim time advances
+        if self.t_min1 != now:
+            self.t_min1 = now
+            if now - self.time > self.Tslot:
+                self.time = now
+        # if self.time has just been updated then update current noise of the agent
+        if now == self.time:
+            prev_noise = agent.current_noise[1]
+            agent.current_noise = np.array([prev_noise,self.random_vector()])
+
         return current
 
 
@@ -104,7 +102,7 @@ def calculate_global_waves(time_S , waves):
         force = wave_param['amplitude'] * np.sin(wave_param['_w'] * time_S + wave_param['shift'])
         current = np.array([force * versor[0], force * versor[1]]).astype(float)
         total_current += current
-    return current
+    return total_current
 
 
 def calculate_local_waves(time_S, agent, waves):
@@ -118,4 +116,4 @@ def calculate_local_waves(time_S, agent, waves):
                  np.sin(wave_param['_w'] * time_S + wave_param['_k']*pos + wave_param['shift']))
         current = np.array([force*versor[0], force*versor[1]])
         total_current += current
-    return current
+    return total_current

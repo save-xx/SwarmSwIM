@@ -9,6 +9,13 @@ from SwarmSwIM.utility._current_functions import VortexField, TimeNoise
 from SwarmSwIM.utility._current_functions import calculate_global_waves, calculate_local_waves
 
 
+def activate_Currents (simulation):
+    """Activate current plugin to simulation."""
+    current_inst = Currents(simulation)
+    setattr(simulation, 'currents', current_inst)
+    simulation.plugins_calls_prestep["Currents"] = simulation.currents
+
+
 class Currents:
     def __init__(self, simulation):
         # internal reference to simulation

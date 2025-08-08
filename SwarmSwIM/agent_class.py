@@ -1,16 +1,20 @@
 """File defining Agent Class."""
-
+from . import sim_functions
+from .sim_functions import parse_matrix
 import numpy as np
 import xml.etree.ElementTree as ET
 import os
+import logging
+import inspect
+
 
 DIR_FILE = os.path.dirname(__file__)
 LOCAL_FILE = os.getcwd()
-
+logger = logging.getLogger(__name__)
 
 class Agent():
     def __init__(self, name,
-                 Dt=0.1, initialPosition=np.array([0.0, 0.0, 0.0]),
+                 initialPosition=np.array([0.0, 0.0, 0.0]),
                  initialHeading=0.0, agent_xml="default.xml", rng=None):
         """
         Agent Object: parameters.
@@ -26,17 +30,16 @@ class Agent():
         self._cmd_force = np.array([0.0, 0.0])
         self._cmd_local_vel = np.array([0.0, 0.0])
         # Fixed time division
-        self.Dt = Dt
+        self.Dt = 0.1 # < placeholder overwritten by simulator
         # Set inital condition
         self.name = name
-        # Set initial positiion
-        if not 3 == len(initialPosition):
-            raise ValueError('Passed initial position is not a 3 element Array or list')
-        if type(initialPosition) in (tuple, list):
-            # convert to numpy array
-            self.pos = np.array(initialPosition).astype(float)
-        else:
-            self.pos = initialPosition.astype(float)
+
+        # Set initial position
+        if not isinstance(initialPosition, (list, tuple, np.ndarray)) or len(initialPosition) != 3:
+            raise ValueError("Initial position must be a list, tuple, or numpy array of length 3.")
+        # Convert to float numpy array
+        self.pos = np.array(initialPosition, dtype=float)
+
         # Set initial heading
         self.psi = initialHeading
         # Genrate random seed based on name
@@ -44,8 +47,10 @@ class Agent():
             self.rnd = np.random.default_rng()
         else:
             self.rnd = np.random.default_rng(hash(name) % 2**20 + rng)
+
         # Load agent parameters from xml
         self.agent_type = agent_xml
+        self._agent_filepath = sim_functions.get_xml_path(agent_xml)
         self.parse_agent_parameters(agent_xml)
         # Parameter initialization
         self.internal_clock = 0.0
@@ -87,11 +92,6 @@ class Agent():
         # Utility
         # --------------------
         # Local Function - parsing of vectors and matrix from XML
-        def parse_matrix(element):
-            """Split text into rows and convert each to a list of floats."""
-            matrix = np.array([list(map(float, row.split())) 
-                               for row in element.text.strip().split('\n')])
-            return np.squeeze(matrix)
 
         def read_float_parameter(name, default_value):
             """Create an attiribute with the string input name and populate."""
@@ -112,19 +112,9 @@ class Agent():
             else:
                 setattr(self, name, np.zeros(2))
 
-        def get_xml_path(input_path):
-            """Return absolute part of sim xml file"""
-            if os.path.isabs(input_path): 
-                path = input_path
-            elif os.path.isfile(os.path.join(LOCAL_FILE, input_path)):
-                path = os.path.join(LOCAL_FILE, input_path)
-            else: 
-                print ("No reference of agent xml found locally, using package directory")
-                path = os.path.join(DIR_FILE, input_path)
-            return path
         # --------------------
 
-        path = get_xml_path(input_path)
+        path = self._agent_filepath
         tree = ET.parse(path)
         root = tree.getroot()
         sim_agent = root.find('sim_agent')
@@ -133,6 +123,12 @@ class Agent():
         # --------------------
         # Parse mass parameters
         read_float_parameter('mass', 1.0)
+        
+        if sim_agent.find('dimentions') is not None:
+            self.dimentions = parse_matrix(sim_agent.find('dimentions'))
+        else:
+            self.dimentions = np.array([0.4, 0.2, 0.3])
+
         if sim_agent.find('added_mass') is not None:
             self.added_mass = parse_matrix(sim_agent.find('added_mass'))
         else:

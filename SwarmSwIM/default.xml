@@ -2,6 +2,9 @@
 <data>
     <sim_agent>
     <!-- Physiscal Parameters -->
+        <!-- dimentions (visual), x,y,z -->
+        <dimentions>0.4  0.2  0.3</dimentions>
+
         <!-- Dry mass, kg -->
         <mass>4.4</mass>
         <!-- Added Mass matrix (planar, transaltional)-->
@@ -60,11 +63,14 @@
     <sensors>
     
         <!-- Add NN Detection  -->
-        <NNDetector>
+        <detector>
             <!-- Time interval between each detection -->
             <period>0.4</period>
             <!-- Camera(s) total Field of View, Horizontal Vertical -->
-            <field_of_view> 120.0 90.0 </field_of_view>
+            <field_of_view>
+            -60.0  60.0
+            -45.0  45.0
+            </field_of_view>
             <!-- Visibility model adopted -->
             <!-- none , linear -->
             <visibility_model>linear</visibility_model>
@@ -77,7 +83,7 @@
             <e_distance>0.0 0.0</e_distance>
             <e_alpha>0.0 0.0</e_alpha> 
             <e_beta>0.0 0.0</e_beta>
-        </NNDetector>
+        </detector>
 
         <!-- Add Acoustic ranging-detection Sensing -->
         <Acoustic_Ranging>

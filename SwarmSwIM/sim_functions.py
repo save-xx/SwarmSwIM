@@ -1,35 +1,101 @@
 import xml.etree.ElementTree as ET
 import numpy as np
+import inspect
+import logging
 import os
 
+
+logger = logging.getLogger(__name__)
 DIR_FILE = os.path.dirname(__file__)
 LOCAL_FILE = os.getcwd()
+
 ########### XML PARSING FUNCTIONS ###########
 
 def parse_matrix(element):
-# Split the text into rows and then convert each row to a list of floats
+    if element is None or element.text is None:
+        return np.array([])
+    # Split the text into rows and then convert each row to a list of floats
     matrix = np.array([list(map(float, row.split())) for row in element.text.strip().split('\n')])
     return np.squeeze(matrix)
 
-def get_sim_xml_path(input_path):
+def get_xml_path(input_path, default = "simulation.xml"):
     """Return absolute part of sim xml file"""
-    if input_path == None: 
-        path = "simulation.xml"
+    # set default name is nothing is passed, or not a string
+    if input_path == None or not isinstance(input_path, str): 
+        input_path = default
+        logger.debug("no name passed or invalid: using default name")
+    if not input_path.endswith(".xml"):
+        input_path += ".xml"
+    # 1st choiche, if an absolute path is provided, priotize its use
     if os.path.isabs(input_path): 
-        path = input_path
-    elif os.path.isfile(os.path.join(LOCAL_FILE, input_path)):
-        path = os.path.join(LOCAL_FILE, input_path)
-    else: 
-        print ("No reference of sim xml found locally, using package directory")
-        path = os.path.join(DIR_FILE, input_path)
-    return path
+        logger.debug("detected absolute path")
+        return input_path
+    # try to find the caller's script directory
+    try:
+        caller_file = inspect.stack()[2].filename
+        running_dir = os.path.dirname(os.path.abspath(caller_file))
+    except Exception:
+        running_dir = ""
+    # 2nd choiche: folder of the user defined script calling the Simulator class
+    candidate = os.path.join(running_dir, input_path)
+    logger.debug(f"User script folder: {running_dir}")
+    if os.path.isfile(candidate):
+        return candidate
+    # 3rd choiche: for runtime execution, use the execution directory
+    candidate = os.path.join(os.getcwd(), input_path)
+    logger.debug(f"Execution directory: {os.getcwd()}")
+    if os.path.isfile(candidate):
+        return candidate
+    # 4th choiche, use default defined simulation.xml
+    logger.warning(f"No reference of {default} found, using default sim")
+    return os.path.join(os.path.dirname(__file__), default)
+
+def parse_agents(simulation_filepath):
+    """Unpack and return Agents."""
+    # initialize and open the file
+    data = {}
+    tree = ET.parse(simulation_filepath)
+    root = tree.getroot()
+    agents_root = root.find('agents')
+    dir_name = os.path.dirname(simulation_filepath)
+    # iterate agents types
+    if agents_root is None or not list(agents_root):
+        return data  # no agents to process
+
+    for agent_type in agents_root:
+        # generate name of description file, in same folder as simulation
+        desc_tag = agent_type.find("description")
+        name_tag = agent_type.find("name")
+        # raise error, if the tag are absent from the description file
+        if desc_tag is None or name_tag is None:
+            raise ValueError("Missing <description> or <name> tag in agent block.")
+        filename = os.path.join(dir_name, desc_tag.text)
+        nametype = name_tag.text
+        states = parse_matrix(agent_type.find('state'))
+        # Handle single  and no element case
+        if 1 == states.ndim: 
+            states = np.array([states])
+        if not states.size: 
+            continue 
+        for i, state in enumerate(states):
+            # apply unique name
+            name = f"{nametype}{i+1:02}"
+            data[name] =[state[0:3], state[3], filename]
+    return data
+
+def get_seed(abs_path):
+    """Extract seed value, if any."""
+    tree = ET.parse(abs_path)
+    root = tree.getroot()
+    seed = int(root.find('seed').text) if root.find('seed') is not None else None
+    return seed
 
 def parse_envrioment_parameters(input_path):
     ''' unpack and return xml parameters for current settings'''
     data = {}
     data['global_waves']=[]
     data['local_waves']=[]
-    path = get_sim_xml_path(input_path)
+    path = get_xml_path(input_path)
 
     tree = ET.parse(path)
     root = tree.getroot()
@@ -104,28 +170,7 @@ def parse_envrioment_parameters(input_path):
     # return structure with all unpacked data
     return data
 
-def parse_agents(input_path):
-    ''' unpack and return parameters for adding agents'''
-    data = {}
-    path = get_sim_xml_path(input_path)
-    tree = ET.parse(path)
-    root = tree.getroot()
-    agents_root = root.find('agents')
-    if agents_root is not None and list(agents_root): 
-        for agent_type in agents_root:
-            filename = agent_type.find("description").text 
-            dir_name = os.path.dirname(path)
-            filename = os.path.join(dir_name,filename)
-            nametype = agent_type.find("name").text 
-            states = parse_matrix(agent_type.find('state'))
-            # Handle single element case
-            if 1==states.ndim: states=np.array([states])
-            # Handle no element case
-            if not states.size: continue 
-            for i, state in enumerate(states):
-                name = f"{nametype}{i+1:02}"
-                data[name]=[state[0:3],state[3],filename]
-    return data
+
 
 ########### CURRENT SIMULATION CLASSES AND FUNCTIONS ###########
 
