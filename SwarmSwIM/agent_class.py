@@ -68,8 +68,12 @@ class Agent():
         self.cmd_local_vel = np.array([0, 0])
         self.cmd_forces = np.array([0, 0])
         # step memory
-        self.last_step_planar = np.array(initialPosition[0:2])
+        self.last_step_pos = np.array(initialPosition)
         self.other_forces = np.array([0, 0])
+
+    def __repr__(self):
+        # NOTE: by design, the name of each agent must be unique.
+        return (f"Agent<{self.name}>")
 
     @property
     def cmd_forces(self):
@@ -310,7 +314,7 @@ class Agent():
             step = (self.Dt * self.vel_limit)
             emulated_velocities = get_emulated_inertial()
             # current effect in the last step, in body axis
-            current_disturbance = self.pos[0:2] - self.last_step_planar 
+            current_disturbance = self.pos[0:2] - self.last_step_pos[0:2] 
             current_disturbance_body = R_mat.transpose() @ current_disturbance
             # current_disturbance_body[1] *= -1
             # real tranlation on the plane required by the controller, body frame
@@ -343,7 +347,7 @@ class Agent():
             self.pos[1] += Dy
 
         # Save last step state
-        self.last_step_planar = self.pos[0:2].copy()
+        self.last_step_pos = self.pos.copy()
 
     # Built-in command packages ##
 

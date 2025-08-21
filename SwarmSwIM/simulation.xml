@@ -1,6 +1,41 @@
 <?xml version="1.0"?>
 <data>
-    <!-- Mandatory Field: Define environment characteristics -->
+
+    <!-- Enforce repetability if defined -->
+    <seed>
+        111 
+    </seed>
+
+    <!-- Describe start-up agents and add them to the simulation -->
+    <agents>
+        <agent_type> 
+            <!-- reference xml describing the agent -->
+            <description>default.xml</description>
+            <!-- Name prefix -->
+            <name>A</name>
+            <state>
+                <!-- Initial state, one line for each agent -->
+                <!-- x, y, z, psi -->
+                0.0  0.0  69.0  0.0
+                3.0  0.0  69.0  45.0
+                <!-- Add more lines to add agents -->
+            </state>
+        </agent_type>
+
+
+        <!-- Uncomment to add different type of agents
+        <agent_type2> 
+            <description>your_file.xml</description>
+            <name>B</name>
+            <state>
+                0.0  0.0  0.0  0.0
+            </state>
+        </agent_type2> 
+        -->
+
+    </agents>
+
+    <!-- Define environment characteristics -->
     <environment_setup>
 
         <!-- Define a constant stream of planar current -->
@@ -90,38 +125,30 @@
 
     </environment_setup>
 
-    <!-- Optional Field: Describe start-up agents and add them to the simulation -->
-    <agents>
-        <agent_type> 
-            <!-- reference xml describing the agent -->
-            <description>default.xml</description>
-            <!-- Name prefix -->
-            <name>A</name>
-            <state>
-                <!-- Initial state, one line for each agent -->
-                <!-- x, y, z, psi -->
-                0.0  0.0  69.0  0.0
-                3.0  0.0  69.0  45.0
-                <!-- Add more lines to add agents -->
-            </state>
-        </agent_type>
 
+    <!-- Acoustic plugin sensor -->
+    <acoustic>
+        <!-- speed of sound in [m/s], defalut: 1500 -->
+        <speed_of_sound>1500.0</speed_of_sound>
+        <!-- maximum range considered for the acoustic communication in m, default: 2000 -->
+        <max_range>2000.0</max_range>
 
-        <!-- Uncomment to add different type of agents
-        <agent_type2> 
-            <description>your_file.xml</description>
-            <name>B</name>
-            <state>
-                0.0  0.0  0.0  0.0
-            </state>
-        </agent_type2> 
-        -->
+        <!-- Noises -->
+        <!-- Two Way Time Travel error on range [m] [bias, SD] -->
+        <e_acoustic_range>0.2 0.2</e_acoustic_range>
+        <!-- Acoustic Doppler based relative velocity measure error [m/s] [bias, SD] -->
+        <e_doppler>0.1 0.2</e_doppler>
+        <!-- computation common delay, betveen ToD collection and actual ToD [s]-->
+        <!-- this amount is flat and equal among all acoustic transcievers -->
+        <delay_acoustic_send>93000e-6</delay_acoustic_send>
+        <!-- computational delay noise [s] [bias, SD]-->
+        <e_delay> 500e-6 50e-6 </e_delay>
+        <!-- clock drift PPM -->
+        <drift>12.0</drift>
+        <!-- Syncronization time start difference gap [s] -->
+        <sync_gap>3.0</sync_gap>
 
+    </acoustic>
 
-    </agents>
-
-    <seed>
-        111 
-    </seed>
 
 </data>

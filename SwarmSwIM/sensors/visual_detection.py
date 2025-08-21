@@ -2,11 +2,19 @@ import numpy as np
 import xml.etree.ElementTree as ET
 import logging
 from dataclasses import dataclass, field
+from SwarmSwIM.sim_functions import parse_matrix
 
-from ..sim_functions import parse_matrix
 
 logger = logging.getLogger(__name__)
 EXPECTED_TAGS = ["period", "field_of_view", "visibility_model"]
+
+
+def activate_Detector(simulation, detector_name: str = "detector"):
+    """Activate detection plugin to simulation."""
+    rnd = np.random.default_rng(simulation.seed) # new rnd based on same seed
+    detector_inst = Detection(simulation, detector_name, rnd)
+    simulation.plugins_calls_poststep[detector_name] = detector_inst
+
 
 @dataclass
 class Generic_detector_memory:
@@ -22,6 +30,7 @@ class Generic_detector_memory:
     since_last_detection: float = 0.0
     latest_detections: dict = field(default_factory=dict)
 
+
 def check_agent_root(path, detector="detector"):
     """Verify that the agent file contains the specified detector tag."""
     tree = ET.parse(path)
@@ -29,24 +38,25 @@ def check_agent_root(path, detector="detector"):
     sensor_root = root.find("sensors")
     # if no sensor is specified skip
     if sensor_root is None: 
-        logger.debug("The XML does not contain a <sensors> element.")
+        logger.warning("The XML does not contain a <sensors> element.")
         return
     detector_root = sensor_root.find(detector)
     # the specific detector is not mounted, skip
     if detector_root is None:
-        logger.debug(f"The XML does not contain a <{detector}> element.")
+        logger.warning(f"The XML does not contain a <{detector}> element.")
         return
     actual_tags = [child.tag for child in detector_root]
     missing_tags = [tag for tag in EXPECTED_TAGS if tag not in actual_tags]
     # if mandatory tags are missing, then raise an error
     if missing_tags:
-        raise ValueError(f"Missing tags in the <{detector}> detector")
+        raise ValueError(f"Missing tags in the <{detector}> detector: {missing_tags}")
     return detector_root
+
 
 class Detection:
     def __init__(self, simulation, detector_name="detector", rnd=None):
         # genrate random seed
-        if rnd: 
+        if rnd is not None: 
             self.rnd = rnd
         else: 
             self.rnd = np.random.default_rng()
@@ -54,22 +64,25 @@ class Detection:
         self.detector_name = detector_name
         self.sim = simulation
         # initialize each agent
-        for name, agent in self.sim():
+        for _, agent in self.sim:
             self.initiate_agent(agent)
 
     def initiate_agent(self, agent):
-        detector_root = check_agent_root(agent._agent_filepath)
+        detector_root = check_agent_root(agent._agent_filepath, self.detector_name)
+        # create attribute if needed (do regardless of the sensor presence)
+        if not hasattr(agent, "detectors"):
+            setattr(agent, "detectors", {})
         # skip agents without the sensor
         if detector_root is None:
             return
         # add detector to agent
-        setattr(agent, self.detector_name, Generic_detector_memory())
+        agent.detectors[self.detector_name] = Generic_detector_memory()
         # parse values
         self.parse_detector(agent, detector_root)
 
     def parse_detector(self, agent, detector_root):
         """Parse a detector sensor description from an agent and populate the class."""
-        detector = getattr(agent, self.detector_name)
+        detector = agent.detectors[self.detector_name]
         detector.period = float(detector_root.find('period').text)
         detector.field_of_view = parse_matrix(detector_root.find('field_of_view'))
         detector.visibility_model = detector_root.find('visibility_model').text
@@ -83,6 +96,8 @@ class Detection:
             detector.e_alpha = parse_matrix(detector_root.find('e_alpha'))
         if detector_root.find('e_beta'):
             detector.e_beta = parse_matrix(detector_root.find('e_beta'))
+        # save changes
+        agent.detectors[self.detector_name] = detector
 
     def emulate_error (self, data, error):
         ''' Alter the input data to simulate measurment errors '''
@@ -96,59 +111,56 @@ class Detection:
         # add any newely present element to the simulator and remove old
         # Iterate for each agent and eventually update detections
         for name, agent in self.sim:
-            detector = getattr(agent, self.detector_name)
+            # skip if dectector is missing for the agent
+            if not self.detector_name in agent.detectors:
+                continue
             # update timer
-            detector.since_last_detection += self.sim.Dt
+            detector = agent.detectors[self.detector_name]
+            agent.detectors[self.detector_name].since_last_detection += self.sim.Dt
             if detector.since_last_detection < detector.period:
                 continue
             # else new detection is required
-            detector.since_last_detection = 0.0
-            dict_of_updates.append(agent.name)
+            agent.detectors[self.detector_name].since_last_detection = 0.0
             self.update_detections(agent, detector)
+            # update return with the new detections
+            dict_of_updates[name] = agent.detectors[self.detector_name].latest_detections
         # return a list with the names of the agents that have received an update
         return dict_of_updates
 
-    def update_detections(self,agent,detector):
+    def update_detections(self, agent, detector):
         ''' updates relative positions of each agent '''
+        # remove all previous detections
+        agent.detectors[self.detector_name].latest_detections.clear()
         for name, other in self.sim:
             # skip self
             if name == agent.name:
                 continue
-            # skip if dectector is missing for the agent
-            if hasattr(agent, self.detector_name):
-                continue
             # calculate relative position, in camera setting
             rel_pos = other.pos - agent.pos
             distance = np.linalg.norm(rel_pos)
-            # avid numerical issues: can't detect overlapping agents
+            # avoid numerical issues: can't detect overlapping agents
             if distance == 0:
                 continue
             # try distance failure probability
             if not self.distance_model(detector, distance):
                 continue
-            # verify FoV compatibility
+            # calculate alpha and beta angles of detection
             psi_rel = np.rad2deg(np.arctan2(rel_pos[1],rel_pos[0]))%360
             # horizontal angle of detection
             alpha = (psi_rel - agent.psi)%360
             alpha -= 360 if alpha > 180 else 0
             # vertical angle of detection
-            beta = -np.rad2deg(np.arcsin(rel_pos[2] / distance))%360
+            ratio = np.clip(rel_pos[2] / distance, -1.0, 1.0)
+            beta = -np.rad2deg(np.arcsin(ratio))%360
             beta -= 360 if beta > 180 else 0
-            # TODO continue from here
+            # verify FoV
+            if not self.check_field_of_view(detector, alpha, beta):
+                continue 
+            # from this point the detection is considered succesfull
+            # construct result with sensor noise
+            result = self.apply_sensor_noise(detector, distance, alpha, beta)
+            agent.detectors[self.detector_name].latest_detections[name] = result
 
-            detection = [distance,alpha,beta]
-            # apply detection 
-            if self.is_detection_succesful(detection, agent):
-                # If succesful 
-                measured_detection = self.detection_uncertanties(detection,agent)
-                agent.NNDetector[other.name]=measured_detection
-            # if not detected remove previous detection, if exist
-            else: 
-                if other.name in agent.NNDetector:
-                    agent.NNDetector.pop(other.name)
-        # remove deleted agents
-        agent_names = {agent.name for agent in Simulator.agents}
-        agent.NNDetector = { k: v for k, v in agent.NNDetector.items() if k in agent_names or k=="time_lapsed"} 
 
     def distance_model(self, detector, distance):
         """Checks if the detection is succesfull, based on distance."""
@@ -158,38 +170,31 @@ class Detection:
             return True
         # spliwise linear model adopted
         if model == 'linear':
+            pts = detector.points
             # Ensure detector.points has correct shape
-            if detector.points.shape[0] != 2:
-                raise ValueError("detector.points must be a (2, N) array for 'linear' model.")
+            if pts.shape[0] != 2 or pts.size == 0:
+                raise ValueError("detector.points must be a (2, N) not empty array for 'linear' model.")
             # linear interpolation over distance to get detection probability
-            probability = np.interp(distance, detector.points[0], detector.points[1])
-            return self.rnd.random() <= probability
+            prob = float(np.interp(distance, pts[0], pts[1]))
+            prob = float(np.clip(prob, 0.0, 1.0))
+            return self.rnd.random() <= prob
+        # if none of the options
+        logger.debug(f"Unknown visibility_model '{detector.visibility_model}'")
+        return False
 
-    def check_field_of_view(self):
+    def check_field_of_view(self, detector, alpha, beta):
         """Verify if detection is in the FoV of the agent."""
-        pass
-
-    def is_detection_succesful(self, detection, agent):
-        ''' Verify is detection is invluded in the agent FoV and if it has been detected '''
-        # Check if in the horizontal FoV
-        if abs(detection[1])>(agent.sensors['NNDetector']['field_of_view'][0]/2): return False
-        # Check if in the vertical FoV
-        if abs(detection[2])>(agent.sensors['NNDetector']['field_of_view'][1]/2): return False
-        ## Probabilistic visibility models
-        # no model, always effective
-        if None == agent.sensors['NNDetector']['visibility_model'] or "none" == agent.sensors['NNDetector']['visibility_model']: return True
-        # linear interpolation on n points 
-        if agent.sensors['NNDetector']['visibility_model']=="linear":
-            probability = np.interp(detection[0],
-                                    agent.sensors['NNDetector']['points'][0],
-                                    agent.sensors['NNDetector']['points'][1])
-            if self.rnd.random()>probability: return False 
-            else: return True
+        fov = detector.field_of_view
+        if fov.shape != (2, 2):
+            raise ValueError(f"field_of_view must be 2x2, got {fov.shape}")
+        # Return True if in the FoV, False otherwise
+        return (fov[0, 0] <= alpha <= fov[0, 1]) and (fov[1, 0] <= beta <= fov[1, 1])
 
 
-    def detection_uncertanties(self, detection, agent):
-        ''' Apply uncertainties of the detector to the stored output'''
-        detection[0] = self.emulate_error(detection[0],agent.sensors['e_NND_distance'])
-        detection[1] = self.emulate_error(detection[1],agent.sensors['e_NND_alpha'])
-        detection[2] = self.emulate_error(detection[2],agent.sensors['e_NND_beta'])
-        return detection
+    def apply_sensor_noise(self, detector, dist, alpha, beta):
+        """Add error to the measuraments"""
+        dist_n = self.emulate_error(dist, detector.e_distance)
+        alpha_n = self.emulate_error(alpha, detector.e_alpha)
+        beta_n = self.emulate_error(beta, detector.e_beta)
+        return {'distance': dist_n, 'alpha': alpha_n, 'beta': beta_n}
+

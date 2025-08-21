@@ -13,7 +13,7 @@ def activate_Currents (simulation):
     """Activate current plugin to simulation."""
     current_inst = Currents(simulation)
     setattr(simulation, 'currents', current_inst)
-    simulation.plugins_calls_prestep["Currents"] = simulation.currents
+    simulation.plugins_calls_prestep["currents"] = simulation.currents
 
 
 class Currents:

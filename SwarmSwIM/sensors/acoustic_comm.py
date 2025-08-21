@@ -1,132 +1,359 @@
 import numpy as np
+from collections import defaultdict
+from collections.abc import Iterable
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+from typing import Any
+import itertools
+
+from SwarmSwIM.sim_functions import parse_matrix
+
+# generate unique ids for each msg
+global_msg_id = itertools.count()
+# Default values (if not specified)
+SPEED_OF_SOUND = 1500. # m/s
+MAX_RANGE = 2000. # m
+
+def _to_float(text, default=0.0):
+    """Turn single value tag to float"""
+    if text is None or text.strip() == "":
+        return default
+    return float(text)
+
+
+
+@dataclass
+class AcousticMsgs:
+    id: set[int] = field(default_factory=set)
+    sender: str | None =  None
+    payload: Any = None
+    intact: bool = True
+    ToD_raw: float = -1.0
+    ToA_raw: float = -1.0
+    perfect_range: float = -1.0
+    ping_range: float = -1.0
+    doppler_velocity: float = 0.0
+
+@dataclass
+class AgentChannel:
+    status: bool = True
+    release_time: float = -1.0
+    incoming: AcousticMsgs = field(default_factory=AcousticMsgs)
+    drift: float = 0.0
+    e_range: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    e_doppler: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    e_delay: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    sync_gap: float = 0.0
+
+
+
 
 class AcousticChannel:
-    def __init__(self):
-        # Define a computational delay from the channel check to the wave front departure
-        self.COMPUTATIONAL_DELAY = 0.05 # seconds, delay between CA and sending
-        self.C = 1500 # speed of sound m/s
-        self.MAX_RANGE = 2000  # 2km max range considered
-        # distance where ideally collision avoidance (CA) should happen but ...
-        #  computation time already started the sending
-        self.BUFF_RADIUS = self.C*self.COMPUTATIONAL_DELAY 
+    def __init__(
+        self, 
+        simulation, 
+        channel_name = "acoustic",
+        agent_selection: list | None = None,
+        c_sound = SPEED_OF_SOUND, 
+        max_range = MAX_RANGE
+        ):
         
-        # Status of the channel, None if free
-        self.channel_status = []
+        self.sim = simulation
+        self.C_SOUND = c_sound
+        self.MAX_RANGE = max_range
+        self.channel_name = channel_name
 
-    def send(self, Agent, Sim , duration, payload=""):
-        ''' verify for collisions '''
-        status = "active"
-        idx_collision = None
-        time = Sim.time
-        for i, event in enumerate(self.channel_status):
-            if status=="denied":break # interrupt if message has been denied
-            for circle in event['circles']:
-                # get distances from center of wave and agent sending
-                distance = np.linalg.norm(circle['center']-Agent.pos)
-                # check if the back end of wave is passed, no effect.
-                if distance < circle['radii'][0]: continue
-                # check if collision avoidance stop transmission.
-                if distance < circle['radii'][1]-self.BUFF_RADIUS:
-                    status = "denied"
-                    break
-                # else collision may happen
-                status = "collision"
-                idx_collision = i # store index of event
+        # collection of active messages
+        self.active_msgs = {}
 
-        # If the communication has been denied return
-        if status=="denied": return "denied"
-
-        # If resulting case is collision, update the event associated
-        if status =="collision":
-            new_circle = {'radii': [0.0,0.0], 'times': [time, time+duration], 'center': Agent.pos}
-            self.channel_status[idx_collision]['circles'].append(new_circle)
-            self.channel_status[idx_collision]['status'] = "collision"
-            self.channel_status[idx_collision]['delivered'].append(Agent)
-            self.channel_status[idx_collision]['payload'] = None
-            self.channel_status[idx_collision]['sender'] = "Failed"
-            return "sent - collision"
-
-        # If suceesfull the add new event
-        if status=="active":
-            new_circle = {'radii': [0.0,0.0], 'times': [time, time+duration], 'center': Agent.pos}
-            event = {'circles': [new_circle], 'status': "active", 'payload': payload , 'delivered': [Agent], 'sender': Agent.name}
-            self.channel_status.append(event)
-            return "sent"
-
-    def __call__(self, Sim):
-        ''' Tick based call to update message '''
-        delivered = {}
-        # update all wave fronts
-        for event in self.channel_status:
-            for circle in event['circles']:
-                # Front of the comm wave radius
-                circle['radii'][1] =          (Sim.time - circle['times'][0]) * self.C  
-                # End of the comm wave radius
-                circle['radii'][0] = max(0.0, (Sim.time - circle['times'][1]) * self.C) 
+        # create random seed
+        self.rnd = simulation.rnd.spawn(1)[0]
+        # find and unpack parameters from simulation xml
+        acoustic_root = self.check_root(simulation._simulation_filepath, channel_name)
+        self.unpack_acoustic_channel(acoustic_root)
+        # add attribute to all agents (even if unused)
+        for _, agent in simulation:
+            setattr(agent, "acoustic_channels", defaultdict(dict))
+        # create active agent sub-dictionary
+        self.generate_agents_dict(simulation, agent_selection)
         
-            # check and return all recived messages, only test yet to deliver
-            agents2check = [agent for agent in Sim.agents if agent not in event['delivered']]
-            for agent in agents2check:
-                # verify if message is recived
-                recived=True
-                for circle in event['circles']:
-                    distance = np.linalg.norm(agent.pos-circle['center'])
-                    if distance > circle['radii'][0]: 
-                        recived=False
-                        break
-                if recived: 
-                    # record as delivered
-                    event['delivered'].append(agent)
-                    delivered[agent.name] = [event['payload'],event['sender']]
-        
-        # Clean up expired events from the channel
-        for event in self.channel_status:
-            # Remove expired circles
-            event['circles'] = [c for c in event['circles'] if c['radii'][0] <=self.MAX_RANGE]
-        # Remove expired events
-        self.channel_status = [e for e in self.channel_status if e['circles']]
-        return delivered
+    def emulate_error (self, data, error):
+        ''' Alter the input data to simulate measurment errors '''
+        data += error[0]
+        data += self.rnd.normal(scale=error[1])
+        return data
 
-    def calculate_toa(self,event,distance):
-        '''On Succesfull message calcuate the ToA'''
-        # handle failed message with empty return
-        if not len(event['circles'])==1: return None
-        exact_ToF = distance*self.C
-        
+    def generate_agents_dict(self, simulation, agent_selection):
+        """generate dict as subgroup of agents involved in the channel"""
+        self.agents_dict = {}
+        if agent_selection:
+            # check that agent_selection is Iterable 
+            if not isinstance(agent_selection, Iterable): 
+                raise ValueError(f"agent_selection must be Iterable: {agent_selection}")
+            # check that the input is a list of strings
+            if not all(isinstance(name, str) for name in agent_selection):
+                raise ValueError(f"all elements of agent_selection must be name strings")
+            
+            for name in agent_selection:
+                # skip if there is no name correspondence
+                if not name in simulation.agents:
+                    continue
+                # create a reduced dictionary of agents
+                self.agents_dict[name] = simulation.agents[name]
+
+        else:
+            # add all agents
+            self.agents_dict = simulation.agents
 
 
-if __name__ == "__main__":
+    @staticmethod
+    def check_root(path, channel_name):
+        """Verify that the simulation file contains the envrioment tag."""
+        tree = ET.parse(path)
+        root = tree.getroot()
+        root = root.find(channel_name)
+        if root is None: 
+            raise ValueError(f"The XML does not contain a <{channel_name}> element.")
+        return root
 
-    # Define a simple Agent class
-    class Agent:
-        def __init__(self, name, pos):
-            self.name = name
-            self.pos = np.array(pos)
 
-    # Define a simple Simulation class
-    class Sim:
-        def __init__(self, time, agents):
-            self.time = time
-            self.agents = agents
+    def unpack_acoustic_channel(self, root):
+        """read parameters for the specified channel."""
+        # update speed of sound if specified
+        c_update = _to_float(root.find("speed_of_sound").text, default=self.C_SOUND)
+        self.C_SOUND = c_update if c_update > 0 else self.C_SOUND
+        # update max range if specified
+        max_update = _to_float(root.find("max_range").text, default=self.MAX_RANGE)
+        self.MAX_RANGE = max_update if max_update  > 0 else self.MAX_RANGE
+        # load noise values range
+        self.e_range = parse_matrix(root.find('e_acoustic_range'))
+        if self.e_range.size == 0:
+            self.e_range = np.zeros(2)
+        # load noise values doppler
+        self.e_doppler = parse_matrix(root.find('e_doppler'))
+        if self.e_doppler.size == 0:
+            self.e_doppler = np.zeros(2)
+        # load noise values computational delay
+        self.computational_delay = _to_float(root.find("delay_acoustic_send").text)
 
-    # Initialize agents
-    agent1 = Agent(name="A1", pos=[0, 0, 0])
-    agent2 = Agent(name="A2", pos=[500, 0, 0])
-    agent3 = Agent(name="A3", pos=[1000, 0, 0])
+        self._e_delay = parse_matrix(root.find('e_delay'))
+        if self._e_delay.size == 0:
+            self._e_delay = np.zeros(2)
+        # load drift value
+        self._PPM  = _to_float(root.find("drift").text)
+        # load syncronization gap between agent
+        self._sync_gap = _to_float(root.find("sync_gap").text)
+
     
-    # Initialize the simulation
-    agents = [agent1, agent2, agent3]
-    sim = Sim(time=0, agents=agents)
-    
-    # Initialize the AcousticChannel
-    channel = AcousticChannel()
+    def populate_acoustic_channel(self, channel_name, agent):
+        """populate each agent channel"""
+        # initialize channel status as free
+        agent.acoustic_channels[channel_name] = AgentChannel()
+        # randomized drift for each agent
+        agent.acoustic_channels[channel_name].drift = self.rnd.uniform(-self._PPM, self._PPM) * 1e-6
+        # randomize start time gap
+        agent.acoustic_channels[channel_name].sync_gap = self.rnd.uniform(
+            -self._sync_gap, self._sync_gap
+            )
+        # randomized computation time
+        comp_bias = self.computational_delay + self.rnd.uniform(-self._e_delay[0], self._e_delay[0])
+        e_delay = np.array([comp_bias, self._e_delay[1]])
+        agent.acoustic_channels[channel_name].e_delay = e_delay
+        # randomized biases range error
+        e_range = np.array([self.rnd.uniform(
+            -self.e_range[0], self.e_range[0]), self.e_range[1]
+            ])
+        agent.acoustic_channels[channel_name].e_range = e_range
+        # randomized biases doppler error
+        e_doppler = np.array([self.rnd.uniform(
+            -self.e_doppler[0], self.e_doppler[0]), self.e_doppler[1]
+            ])
+        agent.acoustic_channels[channel_name].e_doppler = e_doppler
 
-    # Agent1 sends a message
-    print (channel.send(agent1, sim, duration=1, payload="Hello from A1"))
 
-    # Update simulation time and check channel updates
-    # print (channel(sim))
-    for i in range (30):
-        sim.time +=0.1
-        if i==9: print (channel.send(agent3, sim, duration=1, payload="Hello from A3 - 2"))
-        print (channel(sim))
+        # agent.acoustic_channels[channel_name]['status'] = True
+        # agent.acoustic_channels[channel_name]['release_time'] = -1.0
+        # agent.acoustic_channels[channel_name]['incoming'] = {
+        #     'id': [],
+        #     'sender': None,
+        #     'payload': None,
+        #     'intact': True
+        #     }
+        # # randomized drift for each agent
+        # agent.acoustic_channels[channel_name]['drift'] = self.rnd.uniform(-self._PPM, self._PPM) * 1e-6
+        # # randomized biases range error
+        # e_range = np.array([self.rnd.uniform(-self.e_range[0], self.e_range[0]), self.e_range[1]])
+        # agent.acoustic_channels[channel_name]['e_range'] = e_range
+        # # randomized biases doppler error
+        # e_doppler = np.array([self.rnd.uniform(-self.e_doppler[0], self.e_doppler[0]), self.e_doppler[1]])
+        # agent.acoustic_channels[channel_name]['e_doppler'] = e_doppler
+        # # randomized computation time
+        # comp_bias = self.computational_delay + self.rnd.uniform(-self._e_delay[0], self._e_delay[0])
+        # e_delay = np.array([comp_bias, self._e_delay[1]])
+        # agent.acoustic_channels[channel_name]['e_delay'] = e_delay
+        # # randomize start time gap
+        # agent.acoustic_channels[channel_name]['sync_gap'] = self.rnd.uniform(-self._sync_gap, self._sync_gap)
+
+
+    def send (self, agent, msg_payload, msg_duration: float, collsion_avoidance: bool = True):
+        """Send message from a given agent."""
+        # refuse if another message is actively being transmitted
+        if self.sim.time < agent.acoustic_channels[self.channel_name]['release_time']:
+            return False, "Refused - Already transmitting a message"
+        # refuse if collision avoidance is active and reciving
+        if collsion_avoidance:
+            if not agent.acoustic_channels[self.channel_name]['status']:
+                return False, "Refused - Collision avoidance"
+        
+        # send message, use unique hash for each message key
+        self.active_msgs[next(global_msg_id)] = {
+            'sender': agent.name,
+            'start_loc': agent.pos,
+            'front_radius': 0.0,
+            'end_loc': None,
+            'end_radius': None,
+            'payload': msg_payload,
+            'duration': msg_duration,
+            'endtime': self.sim.time + msg_duration,
+            'tod_raw': self.get_TimeOfDeparture(agent),
+            'tod_exact': self.sim.time
+        }
+
+        # lock communication of agent until the message is fully sent
+        agent.acoustic_channels[self.channel_name]['release_time'] = self.sim.time + msg_duration
+
+        return True, "Sent"
+
+    def get_TimeOfDeparture(self, agent):
+        """Return the realistic (error affected) ToD for a message."""
+        propriesties = agent.acoustic_channels[self.channel_name]
+        # add drift over time and intial t0 difference
+        tod = self.sim.time * (1 + propriesties.drift) + propriesties.sync_gap
+        # add computation delay (fixed + random)
+        tod = self.emulate_error(tod, propriesties.e_delay)
+        return tod
+
+
+    def __call__(self):
+        """Resolve acoustic events."""
+        self._evolve_waves()
+        for id, msg in self.active_msgs.items():
+            for name, agent in self.agents_dict.items():
+                # exclude sender
+                if msg['sender'] == name:
+                    continue
+                incoming = agent.acoustic_channels[self.channel_name].incoming
+                # if id same not stored check add check wave in
+                if not (id in incoming.id):
+                    # if an event is detected_add it to the agent memory
+                    event = self._wave_check(self, agent, msg['start_loc'], msg['front_radius'])
+                    if event:
+                        self._add_msg_to_agent(self, agent, msg)
+                # for registered ids (front wave met), check end waves
+                else:
+                    event = self._wave_check(self, agent, msg['end_loc'], msg['end_radius'])
+                    if event:
+                        # remove id from id list
+                        incoming.id.remove(id)
+                        # if was the last id the the message is outputed
+                        if 0 == len(incoming.id):
+                            self._return_msg_to_agent(agent, msg)
+
+
+    def _evolve_waves(self):
+        # iterate all active message
+        for id, msg in self.active_msgs.items():
+            # advance front wave limited to MAX_RANGE
+            msg['front_radius'] += self.C_SOUND * self.sim.Dt
+            if msg['front_radius'] > self.MAX_RANGE:
+                msg['front_radius'] = self.MAX_RANGE
+            # check start end wave
+            if msg['endtime'] > self.sim.time:
+                continue
+            # check if end wave is born in this step
+            if msg['endtime'] > self.sim.time - self.sim.Dt:
+                # set end wave initial position
+                msg['end_loc'] = self.agents_dict[msg['sender']].pos
+            # advance end wave
+            msg['end_radius'] = (self.sim.time - msg['endtime']) * self.C_SOUND * self.sim.Dt
+
+
+    def _remove_waves(self):
+        """Remove obsolete waves."""
+        self.active_msgs = {
+            k: v for k, v in self.active_msgs.items() if v['end_radius'] <= self.MAX_RANGE
+            }
+
+
+    def _wave_check(self, agent, center, radius):
+        """Checks if a wave an agent has met a wave in the last timestep"""
+        if center == None:
+            return False
+        radius_last_step = np.linalg.norm(agent.last_step_pos - center)
+        radius_now = np.linalg.norm(agent.pos - center)
+        was_outside = radius_last_step > radius - self.C_SOUND * self.sim.Dt
+        is_inside =  radius_now <= radius
+        return was_outside and is_inside
+
+
+    def _add_msg_to_agent(self, agent, msg):
+        """Add an incoming communication to an agent and resolve collisions.
+        If only one message ID is present, the message is stored.
+        If multiple IDs are present, this is treated as a collision.
+        """
+        channel = agent.acoustic_channels[self.channel_name]
+        incoming = channel.incoming
+
+        # Add message ID and lock the channel
+        incoming.id.add(msg["id"])
+        channel.status = False  
+
+        if len(incoming.id) == 1:  
+            # First/only entry → successful reception
+            incoming.sender = msg["sender"]
+            incoming.payload = msg["payload"]
+            incoming.ToD_raw = msg["tod_raw"]
+            incoming.intact = True
+        else:  
+            # Collision → invalidate message
+            incoming.sender = None
+            incoming.payload = None
+            incoming.ToD_raw = None
+            incoming.intact = False
+
+    def _return_msg_to_agent(self, agent, msg):
+        """ """
+        channel = agent.acoustic_channels[self.channel_name]
+        incoming = channel.incoming
+        sender = self.sim.agents[msg['sender']]
+        # Release Channel
+        channel.status = True
+        # Calculate ToA
+        incoming.ToA_raw = self.get_TimeOfArrival(channel)
+        distance = np.linalg.norm(self.sim.rel_pos(agent, sender))
+        incoming.perfect_range = distance
+        ping_range = self.ping_range()
+        doppler_velocity = self.get_doppler()
+
+    def get_TimeOfArrival(self, channel):
+        """ """
+        # add drift over time and intial t0 difference
+        toa = self.sim.time * (1 + channel.drift) + channel.sync_gap
+        return toa
+
+    def get_ping_range(self):
+        # measure distance of sender in the past
+        # time drift
+        """ """
+        pass
+
+    def get_doppler(self, msg):
+        """ """
+        # gather start and end of message
+        sender_t0 = msg['tod_exact']
+        sender_t1 = msg['endtime']
+        reciver_t0 = self.sim.time - msg['duration']
+        reciver_t1 = self.sim.time
+
+        
+

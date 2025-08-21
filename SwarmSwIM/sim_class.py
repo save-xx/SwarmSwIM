@@ -52,6 +52,7 @@ class Simulator():
     @property
     def Dt(self):
         return self._Dt
+    
     @Dt.setter
     def Dt(self, input):
         self._Dt = input
@@ -133,8 +134,8 @@ class Simulator():
         self.update_history()
         # execute post step plugins
         responses_post = self.execute_plugins(self.plugins_calls_poststep)
-        # return all plugins outputs
-        return responses_pre | responses_post
+        # return all plugins outputs (combine dictionaries)
+        return responses_pre | responses_post # <- fuse 2 dict into one
 
     # Subfunction of the main tick
     def update_history(self):
