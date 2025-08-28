@@ -1,4 +1,5 @@
 import numpy as np
+import copy
 from collections import defaultdict
 from collections.abc import Iterable
 import xml.etree.ElementTree as ET
@@ -29,7 +30,10 @@ class AcousticMsgs:
     payload: Any = None
     intact: bool = True
     ToD_raw: float = -1.0
+    ToD_exact: float = -1.0
     ToA_raw: float = -1.0
+    ToA_exact: float = -1.0
+    pos_at_detection: np.ndarray | None = None
     perfect_range: float = -1.0
     ping_range: float = -1.0
     doppler_velocity: float = 0.0
@@ -77,7 +81,7 @@ class AcousticChannel:
         # create active agent sub-dictionary
         self.generate_agents_dict(simulation, agent_selection)
         
-    def emulate_error (self, data, error):
+    def emulate_error (self, data: float, error: np.ndarray) -> float:
         ''' Alter the input data to simulate measurment errors '''
         data += error[0]
         data += self.rnd.normal(scale=error[1])
@@ -198,11 +202,11 @@ class AcousticChannel:
     def send (self, agent, msg_payload, msg_duration: float, collsion_avoidance: bool = True):
         """Send message from a given agent."""
         # refuse if another message is actively being transmitted
-        if self.sim.time < agent.acoustic_channels[self.channel_name]['release_time']:
+        if self.sim.time < agent.acoustic_channels[self.channel_name].release_time:
             return False, "Refused - Already transmitting a message"
         # refuse if collision avoidance is active and reciving
         if collsion_avoidance:
-            if not agent.acoustic_channels[self.channel_name]['status']:
+            if not agent.acoustic_channels[self.channel_name].status:
                 return False, "Refused - Collision avoidance"
         
         # send message, use unique hash for each message key
@@ -275,7 +279,7 @@ class AcousticChannel:
                 # set end wave initial position
                 msg['end_loc'] = self.agents_dict[msg['sender']].pos
             # advance end wave
-            msg['end_radius'] = (self.sim.time - msg['endtime']) * self.C_SOUND * self.sim.Dt
+            msg['end_radius'] = (self.sim.time - msg['endtime']) * self.C_SOUND
 
 
     def _remove_waves(self):
@@ -313,12 +317,13 @@ class AcousticChannel:
             incoming.sender = msg["sender"]
             incoming.payload = msg["payload"]
             incoming.ToD_raw = msg["tod_raw"]
+            incoming.ToD_exact = msg["tod_exact"]
             incoming.intact = True
+            incoming.pos_at_detection = copy.deepcopy(agent.pos)
         else:  
             # Collision → invalidate message
             incoming.sender = None
             incoming.payload = None
-            incoming.ToD_raw = None
             incoming.intact = False
 
     def _return_msg_to_agent(self, agent, msg):
@@ -328,32 +333,39 @@ class AcousticChannel:
         sender = self.sim.agents[msg['sender']]
         # Release Channel
         channel.status = True
+        # positions at instant of front wave emission and reception
+        sender_position = msg['start_loc']
+        receiver_position = incoming.pos_at_detection  # with assumption of C_SOUND >> agent velocity
+        # distance measurament  |  front wave instance 
+        exact_distance = np.linalg.norm(sender_position - receiver_position)
+        # distance at arrival
+        incoming.perfect_range = exact_distance
+        # continue calculation if the message is intact
+        if not incoming.intact:
+            return
         # Calculate ToA
-        incoming.ToA_raw = self.get_TimeOfArrival(channel)
-        distance = np.linalg.norm(self.sim.rel_pos(agent, sender))
-        incoming.perfect_range = distance
-        ping_range = self.ping_range()
-        doppler_velocity = self.get_doppler()
+        incoming.ToA_raw, incoming.ToA_exact = self.get_TimeOfArrival(channel, exact_distance, msg['end_radius'])
+        # adding ranging noise (TwoWayTimeTravel-like measurament)
+        incoming.ping_range = self.emulate_error(exact_distance, self.e_range)
+        # get position at the endwave instance for doppler
+        sender_endwave_position = self.sim.memory.recall_position(sender, msg['endtime'])
+        receiver_endwave_position = agent.pos
+        # calculate doppler value calculated
+        #              t1 .     .      (p_r - p_s)                    [p_r(t1) - p_s(t1)] - [p_r(t0) - p_s(t0)]
+        # doppler =   ∫ (p_r - p_s) x ------------- dt  / (t1-t0)  = -----------------------------------------
+        #              t0             ||p_r - p_s||                                   (t1 -t0)
+        doppler  = ((receiver_endwave_position - sender_endwave_position) - (receiver_position - sender_position)) / msg["duration"]
+        incoming.doppler_velocity = self.emulate_error(doppler, self.e_doppler)
 
-    def get_TimeOfArrival(self, channel):
+
+    def get_TimeOfArrival(self, channel, distance, radius):
         """ """
+        # calcualte exact time of arrival
+        toa_exact = self.sim.time - (radius -  distance) / self.C_SOUND
         # add drift over time and intial t0 difference
-        toa = self.sim.time * (1 + channel.drift) + channel.sync_gap
-        return toa
+        toa = toa_exact * (1 + channel.drift) + channel.sync_gap
+        return toa, toa_exact
 
-    def get_ping_range(self):
-        # measure distance of sender in the past
-        # time drift
-        """ """
-        pass
-
-    def get_doppler(self, msg):
-        """ """
-        # gather start and end of message
-        sender_t0 = msg['tod_exact']
-        sender_t1 = msg['endtime']
-        reciver_t0 = self.sim.time - msg['duration']
-        reciver_t1 = self.sim.time
 
         
 

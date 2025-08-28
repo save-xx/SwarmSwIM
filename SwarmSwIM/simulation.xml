@@ -6,6 +6,11 @@
         111 
     </seed>
 
+    <!-- number of elements keept in the short term memory -->
+    <history_length>
+        50 
+    </history_length>
+
     <!-- Describe start-up agents and add them to the simulation -->
     <agents>
         <agent_type> 

@@ -1,9 +1,9 @@
 import numpy as np
 import copy
 import logging
-from .agent_class import Agent
+from SwarmSwIM import Agent
 from . import sim_functions
-
+from SwarmSwIM import HistoryShortMemory
 
 logger = logging.getLogger(__name__)
 # Short term history memory of all agents, to consider acoustic effects
@@ -23,7 +23,7 @@ class Simulator():
         self.time = 0
         self.Dt = timeSubdivision
 
-        self.history = {}
+        self.history = None
         self.agents = {}
 
         self.plugins_calls_prestep = {}
@@ -58,7 +58,26 @@ class Simulator():
         self._Dt = input
         self._hist_length = max(2,int(np.ceil(HISTORY_MEMORY/input))) # minimum 2 cells
 
-    # Internal methods to add or remove a single agent from the simulation
+    # --------------------------
+    # Short term memory handling
+    # --------------------------
+
+    @property
+    def has_memory(self):
+        return self.memory is not None
+    
+    def enable_memory(self):
+        if not self.has_memory:
+            self.memory = HistoryShortMemory(self)
+
+    def disable_memory(self):
+        self.memory = None
+
+    # ------------------
+    # Add/ Remove agents
+    # ------------------
+
+    # Internal methods to add a single agent from the simulation
     def _add(self, new_agent):   
         """Add an Agent to the simulation.""" 
         if not isinstance(new_agent, Agent):
@@ -75,6 +94,7 @@ class Simulator():
         # Add to simulation dictionary
         self.agents[new_agent.name] = new_agent
 
+    # Internal methods to remove a single agent from the simulation
     def _remove(self,new_agent):
         if not isinstance(new_agent, Agent):
             logger.warning(f"Can't add instance: object of type {type(new_agent).__name__} is not an Agent.")
@@ -131,6 +151,8 @@ class Simulator():
         for agent in self.agents.values():
             agent.tick()
         # update the short term memory of positions
+        if self.has_memory:
+            self.memory()
         self.update_history()
         # execute post step plugins
         responses_post = self.execute_plugins(self.plugins_calls_poststep)
@@ -210,12 +232,15 @@ class Simulator():
         return output
 
 if __name__=="__main__":
+
     S = Simulator(0.1)
     A1 = S.agents[0]
     A1.cmd_fhd(0.0,0.,0.)
+
     for i in range(80):
         S.tick()
         # print(f'{A1.pos[0]:.6f},{A1.pos[1]:.6f}')
+
     print('-----')
     print (S.OWTT_acoustic_range(S.agents[0],S.agents[1]))
     print (S.acoustic_range(S.agents[0],S.agents[1]))

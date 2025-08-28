@@ -9,13 +9,29 @@ logger = logging.getLogger(__name__)
 DEFAULT_LENGTH = 10
 
 
+
 class HistoryShortMemory:
     def __init__(self, sim):
         self.sim = sim
-        self.history = defaultdict(lambda: deque(maxlen=DEFAULT_LENGTH))
-        self.time_axis = deque(maxlen=DEFAULT_LENGTH)
         # load length
         self.set_history_length()
+        self.initiate_agents()
+
+
+    def initiate_agents(self) -> None:
+        """Initate assocuiated attribute for each agent."""
+        # Initiate shared time axis memory
+        n = self.HISTORY_LENGTH
+        self.time_axis= deque(
+                [
+                    self.sim.time - k * self.sim.Dt for k in reversed(range(n))
+                ], maxlen=n
+            )
+        # for each agent initiate individuel deque memory
+        for _, agent in self.sim.agents.items():
+            new_deque = deque([agent.pos.copy() for _ in range(n)], maxlen=n)
+            setattr(agent, "memory", new_deque)
+
 
     def set_history_length(self):
         """Load history length from simulation file, fallback to default if invalid."""
@@ -23,10 +39,8 @@ class HistoryShortMemory:
             tree = ET.parse(self.sim._simulation_filepath)
             root = tree.getroot()
             length_text = root.find("history_length")
-            if length_text is not None and length_text.text is not None:
-                self.HISTORY_LENGTH = int(length_text.text)
-            else:
-                raise ValueError("Missing <history_length>")
+            self.HISTORY_LENGTH = int(length_text.text)
+
         except Exception as e:
             self.HISTORY_LENGTH = DEFAULT_LENGTH
             logger.info(
@@ -34,9 +48,6 @@ class HistoryShortMemory:
             )
             logger.debug(f"Exception: {e}")
 
-        # update existing deques to respect HISTORY_LENGTH
-        self.time_axis = deque(self.time_axis, maxlen=self.HISTORY_LENGTH)
-        self.history = defaultdict(lambda: deque(maxlen=self.HISTORY_LENGTH), self.history)
 
     def __call__(self):
         """Keep a record of all positions in the last HISTORY_LENGTH steps."""
@@ -46,14 +57,15 @@ class HistoryShortMemory:
         # update history
         for name, agent in self.sim.agents.items():
             # make a copy of the current position
-            position = copy.deepcopy(agent.pos)
-            self.history[name].append(position)
+            position = agent.pos.copy()
+            agent.memory.append(position)
 
-    def recall_position(self, t_req, name):
+
+    def recall_position(self, t_req, agent):
         """Recall the position of an agent at a certain time.""" 
         # check agent existence
-        if name not in self.sim.agents:
-            raise KeyError(f"Agent name {name} not found in the simulation")
+        if agent.name not in self.sim.agents:
+            raise KeyError(f"Agent name {agent.name} not found in the simulation")
 
         if not self.time_axis:  # empty history
             raise RuntimeError("History is empty, cannot recall position")
@@ -64,7 +76,7 @@ class HistoryShortMemory:
                 f"Recalling position requested future time {t_req}, "
                 f"returning result at last recorded time {self.time_axis[-1]}"
             )
-            return self.history[name][-1]
+            return agent.memory[-1]
 
         # check if requesting time is older than short memory
         if t_req < self.time_axis[0]:
@@ -72,13 +84,13 @@ class HistoryShortMemory:
                 f"History memory too short to remember positions at time {t_req}, "
                 f"returning result at earliest recorded time {self.time_axis[0]}"
             )
-            return self.history[name][0]
+            return agent.memory[0]
 
         # return the interpolated position
-        return self.get_position(self.time_axis, self.history[name], t_req)
+        return self.get_position(self.time_axis, agent.memory, t_req)
 
     @staticmethod
-    def get_position(time_axis, positions, t_req):
+    def get_position(time_axis: deque, positions: deque, t_req: float) -> np.ndarray:
         """
         Given time_axis (sorted deque/array of times) and positions (deque/list of np.array shape (3,)),
         return the interpolated position at t_req.
@@ -92,7 +104,11 @@ class HistoryShortMemory:
 
         t0, t1 = time_axis[idx], time_axis[idx + 1]
         p0, p1 = positions[idx], positions[idx + 1]
-
+        
+        # guard against division by 0 case
+        if t1 == t0:
+            return p0
+        
         # interpolation factor
         alpha = (t_req - t0) / (t1 - t0)
         return (1 - alpha) * p0 + alpha * p1

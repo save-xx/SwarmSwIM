@@ -68,7 +68,7 @@ class Agent():
         self.cmd_local_vel = np.array([0, 0])
         self.cmd_forces = np.array([0, 0])
         # step memory
-        self.last_step_pos = np.array(initialPosition)
+        self.last_step_pos = self.pos.copy()
         self.other_forces = np.array([0, 0])
 
     def __repr__(self):
