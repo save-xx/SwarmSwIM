@@ -176,3 +176,16 @@ Launch as requested here in order to avoid crashing of UE5 environment!
 
 ## Wiki
 For more details, check out the [Wiki](https://github.com/save-xx/SwarmSwIM/wiki).
+
+## Cite
+If you found this work useful, please cite us using the following:
+
+```bibtex
+@inproceedings{iacoponi2025h,
+  title={SwarmSwIM: a simulator for underwater swarms of robots. In OCEANS 2025},
+  author={Iacoponi, Saverio and Infanti, Andrea and El Hanbali, Mohammed and De Masi, Giulia and Renda, Federico},
+  booktitle={OCEANS 2025, Brest},
+  year={2025},
+  organization={IEEE}
+}
+```
