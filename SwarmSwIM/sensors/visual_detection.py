@@ -11,8 +11,7 @@ EXPECTED_TAGS = ["period", "field_of_view", "visibility_model"]
 
 def activate_Detector(simulation, detector_name: str = "detector"):
     """Activate detection plugin to simulation."""
-    rnd = np.random.default_rng(simulation.seed) # new rnd based on same seed
-    detector_inst = Detection(simulation, detector_name, rnd)
+    detector_inst = Detection(simulation, detector_name)
     simulation.plugins_calls_poststep[detector_name] = detector_inst
 
 
@@ -54,12 +53,9 @@ def check_agent_root(path, detector="detector"):
 
 
 class Detection:
-    def __init__(self, simulation, detector_name="detector", rnd=None):
-        # genrate random seed
-        if rnd is not None: 
-            self.rnd = rnd
-        else: 
-            self.rnd = np.random.default_rng()
+    def __init__(self, simulation, detector_name="detector"):
+        # create random seed
+        self.rnd = simulation.rnd.spawn(1)[0]
         
         self.detector_name = detector_name
         self.sim = simulation

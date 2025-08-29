@@ -61,12 +61,13 @@ class HistoryShortMemory:
             agent.memory.append(position)
 
 
-    def recall_position(self, t_req, agent):
+    def recall_position(self, t_req, name):
         """Recall the position of an agent at a certain time.""" 
         # check agent existence
-        if agent.name not in self.sim.agents:
-            raise KeyError(f"Agent name {agent.name} not found in the simulation")
-
+        if name not in self.sim.agents:
+            raise KeyError(f"Agent name {name} not found in the simulation")
+        agent = self.sim.agents[name]
+        
         if not self.time_axis:  # empty history
             raise RuntimeError("History is empty, cannot recall position")
 

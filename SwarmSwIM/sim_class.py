@@ -1,14 +1,13 @@
 import numpy as np
 import copy
 import logging
-from SwarmSwIM import Agent
+from .agent_class import Agent
 from . import sim_functions
-from SwarmSwIM import HistoryShortMemory
+from .utility.history_short_memory import HistoryShortMemory
+
 
 logger = logging.getLogger(__name__)
-# Short term history memory of all agents, to consider acoustic effects
-HISTORY_MEMORY = 2 # seconds
-C_SOUND = 1500 # m/s
+
 
 class Simulator():
     def __init__(self, timeSubdivision=1.0, sim_xml="simulation.xml"):
@@ -17,13 +16,10 @@ class Simulator():
         - timeSubdivision: (float), unit in seconds, time interval used for each simulation step.
         - sim_xml: (string) name of XML file describing the simulation parameters
         """
-        self._Dt = 0
-        self._hist_length = 2 # minimum length
-
         self.time = 0
         self.Dt = timeSubdivision
 
-        self.history = None
+        self.memory = None
         self.agents = {}
 
         self.plugins_calls_prestep = {}
@@ -48,15 +44,6 @@ class Simulator():
     def __iter__(self):
         """Overload the iterator to provide agents"""
         return iter(self.agents.items())
-
-    @property
-    def Dt(self):
-        return self._Dt
-    
-    @Dt.setter
-    def Dt(self, input):
-        self._Dt = input
-        self._hist_length = max(2,int(np.ceil(HISTORY_MEMORY/input))) # minimum 2 cells
 
     # --------------------------
     # Short term memory handling
@@ -89,8 +76,6 @@ class Simulator():
             return
         # enforce Dt to agent
         new_agent.Dt = self.Dt
-        # initialize history (assume no movment in the past)
-        self.history[new_agent.name] = [copy.deepcopy(new_agent.pos)]*self._hist_length
         # Add to simulation dictionary
         self.agents[new_agent.name] = new_agent
 
@@ -153,75 +138,16 @@ class Simulator():
         # update the short term memory of positions
         if self.has_memory:
             self.memory()
-        self.update_history()
         # execute post step plugins
         responses_post = self.execute_plugins(self.plugins_calls_poststep)
         # return all plugins outputs (combine dictionaries)
         return responses_pre | responses_post # <- fuse 2 dict into one
 
-    # Subfunction of the main tick
-    def update_history(self):
-        """Keep a record of all positions in the last HISTORY_MEMORY seconds."""
-        for agent in self.agents.values():
-            position = copy.deepcopy(agent.pos)
-            hist = self.history[agent.name]
-            hist.append(position)
-            # Ensure fixed history length
-            if len(hist)>self._hist_length:
-                self.history[agent.name].pop(0)
-            # Edge case: history had only one entry, fill it
-            if 1 == len(hist):
-                self.history[agent.name]= [position] * self._hist_length
 
     def rel_pos(self, A : Agent, B :Agent):
         ''' Measure relative distance of 2 agents (A and B), as vector A to B'''
         return (B.pos-A.pos)
     
-    def acoustic_range(self, A : Agent, B :Agent):
-        ''' 
-        Return the acoustic range between 2 agents (A and B), measured in A.  
-        Accounts for Time of Flight between A and B.
-        '''
-        d0 = np.linalg.norm(self.rel_pos(A,B))
-        delay_seconds= d0/C_SOUND
-        if delay_seconds>=HISTORY_MEMORY: raise MemoryError ("The ditance delays exeed the history memory, \
-                                                                increase the memory interval HISTORY_MEMORY")
-        times = np.arange(-(len(self.history[B.name]) - 1) * self.Dt, self.Dt, self.Dt)
-        dists = [np.linalg.norm(Bhist - A.pos) for Bhist in self.history[B.name]] 
-        perfect_distance = np.interp(-delay_seconds,times,dists)                        # Distance assumed no error
-        measured_distance = A.emulate_error( perfect_distance, A.sensors['e_ac_range'] )   # Added measurment
-        return measured_distance
-
-    def OWTT_acoustic_range(self, A : Agent, B :Agent):
-        ''' Returns the One Way Time Traver Ranging, accounting for clock drift error'''
-        ideal_range = self.acoustic_range(A,B)
-        drift_variance = (A.internal_clock - B.internal_clock) * C_SOUND
-        return ideal_range + drift_variance
-
-    def doppler(self,A,B):
-        ''' 
-        Returns  the velocity component projected on the AB axis, as if estimated via acoustic Doppler shift.
-        - A and B: Agent instances  
-        - Measurament obtaines as if captured in A  
-        - Accounts for message time duration, averaging the measurament on the time interval.
-        '''
-        msg_dt = A.sensors['ac_msg_length']
-        ## Approxiate length in messages (minimum 2 considered)
-        elements = int(np.ceil(msg_dt/self.Dt)+1)
-        ## element shift due to acoustic delay
-        delay_seconds= np.linalg.norm(self.rel_pos(A,B))/C_SOUND
-        delay_steps = int(delay_seconds//self.Dt)
-        if elements+delay_steps > self._hist_length: 
-            raise MemoryError ("The message length exeeds the history memory, \
-                                increase the memory interval HISTORY_MEMORY")
-        ranges = []
-        for i in range(elements):
-            # collect distances over msg time interval (minimum 2)
-            distance = (self.history[B.name][-1-i-delay_steps]-self.history[A.name][-1-i])
-            ranges.append(np.linalg.norm(distance))
-        perfect_doppler = np.mean(-np.diff(ranges)/self.Dt)          # ideal measurment of doppler
-        measured_doppler = A.emulate_error( perfect_doppler, A.sensors['e_ac_doppler'] ) 
-        return measured_doppler
     
     @property
     def states(self):
@@ -241,7 +167,3 @@ if __name__=="__main__":
         S.tick()
         # print(f'{A1.pos[0]:.6f},{A1.pos[1]:.6f}')
 
-    print('-----')
-    print (S.OWTT_acoustic_range(S.agents[0],S.agents[1]))
-    print (S.acoustic_range(S.agents[0],S.agents[1]))
-    print (S.doppler(S.agents[0],S.agents[1]))
