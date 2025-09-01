@@ -16,6 +16,7 @@ class Simulator():
         - timeSubdivision: (float), unit in seconds, time interval used for each simulation step.
         - sim_xml: (string) name of XML file describing the simulation parameters
         """
+        self.step_count = 0
         self.time = 0
         self.Dt = timeSubdivision
 
@@ -129,6 +130,7 @@ class Simulator():
     def tick(self):
         """Advance one step of simulation."""
         # update time
+        self.step_count += 1
         self.time += self.Dt
         # execute pre step plugins
         responses_pre = self.execute_plugins(self.plugins_calls_prestep)

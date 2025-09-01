@@ -8,7 +8,7 @@
 
     <!-- number of elements keept in the short term memory -->
     <history_length>
-        50 
+        200 
     </history_length>
 
     <!-- Describe start-up agents and add them to the simulation -->

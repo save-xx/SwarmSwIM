@@ -16,7 +16,8 @@ dependencies = [
   "matplotlib",
   "fastapi",
   "uvicorn",
-  "opencv-python"
+  "opencv-python",
+  "imageio[ffmpeg]>=2.31"
 ]
 
 [tool.setuptools.packages.find]
