@@ -9,6 +9,7 @@ import imageio
 import logging
 
 
+LOG_THROTTLE = 2.0
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +36,8 @@ class Simulator2D:
         """
 
         """
+        self._log_throttler = time.perf_counter()
+
         self.tick_function = tick_function
         self.fps = 1 / simulation.Dt
         self.sim = simulation
@@ -45,6 +48,7 @@ class Simulator2D:
         defaults = {
             "title": "2D Simulator",
             "record": False,
+            "window_size": (800, 608),
             "outfile": "simulation.mp4",
             "bg_color": "k",  # black background
             "bg_shapes": []  # list of shapes to draw
@@ -62,8 +66,18 @@ class Simulator2D:
 
         # Window + plot
         self.win = pg.GraphicsLayoutWidget(show=True, title=self.props["title"])
+
         self.plot = self.win.addPlot()
         self.plot.setAspectLocked(True)
+
+        # image size 
+        w, h = self.props["window_size"]
+        self.win.resize(w, h)
+
+        # lock window size if recording
+        if self.props["record"]:
+            self.win.setFixedSize(w, h)
+
         if self.props['grid']:
             self.plot.showGrid(x=True, y=True)
         self.win.setBackground(self.props["bg_color"])
@@ -75,10 +89,13 @@ class Simulator2D:
         if "bg_image" in self.props and self.props["bg_image"]:
             path = self.props["bg_image"]["path"]
             scale = self.props["bg_image"].get("scale", 1.0)
-            img = imageio.v2.imread(path)  
-            # Ensure RGB (drop alpha if present)
-            if img.shape[-1] == 4:
-                img = img[..., :3]          
+            img = imageio.v2.imread(path)
+            # grayscale → convert to RGB  
+            if img.ndim == 2:
+                img = np.stack([img]*3, axis=-1)
+            # drop alpha
+            elif img.shape[-1] == 4:
+                img = img[..., :3]      
             # Fix orientation:
             # - Transpose to swap axes (90° rotation)
             img = np.fliplr(np.transpose(img, (1, 0, 2)))
@@ -102,10 +119,24 @@ class Simulator2D:
         for _, agent in self.sim.agents.items():
             self._initiate_agent(agent)
 
+        # connect resize event only if not locked
+        if not self.props["record"]:
+            # print new sizes
+            self.win.resizeEvent = self._on_resize
+
         # Timer
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update)
         self.timer.start(int(1000 / self.fps ))
+
+
+    def _on_resize(self, event):
+        """Wrap resize function to print new sizes"""
+        size = event.size()
+        w, h = size.width(), size.height()
+        logger.info(f"Window resized to {w}x{h}px")
+        # call the normal Qt resize handler
+        super(type(self.win), self.win).resizeEvent(event)
 
 
     def type_color(self, agent):
@@ -183,16 +214,20 @@ class Simulator2D:
         xy = np.array(agent.memory)[:, :2]  # shape (N,2)
         curve.setData(x=xy[:,1], y=xy[:,0])
 
+
     def check_real_time(self):
+        """Logs discrepancies of the animation compared to real time."""
         now = time.perf_counter()
         if self._last_update is not None:
             elapsed = now - self._last_update
-            if elapsed > 1.5 * self.sim.Dt:  # allow a small tolerance
+            if elapsed > 1.5 * self.sim.Dt and self._log_throttler + LOG_THROTTLE < now:  # allow a small tolerance
+                self._log_throttler = now
                 logger.warning(
                     f"Animation is lagging! Frame took {elapsed*1000:.1f} ms "
                     f"(target {self.sim.Dt*1000:.1f} ms)"
                 )
         self._last_update = now
+
 
     @staticmethod
     def qimage_to_rgb_array(qimg):
@@ -250,13 +285,14 @@ if __name__ == "__main__":
 
     properties = {
         "bg_image": {
-            "path": "photo_2025-06-02_11-19-05.jpg",
+            # "path": "images.jpg",
+            "path": "sample.png",
             "scale": 0.01,   # scaling factor in data coords
         },
         "bg_color": 'w',
         "grid": True,
         "color_by_type": False,
-        "record": True
+        "record": True,
     }
 
     sim = Simulator2D(S, my_func, properties=properties)

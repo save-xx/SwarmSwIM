@@ -17,6 +17,8 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "opencv-python",
+  "pyqtgraph>=0.13",
+  "PyQt5",
   "imageio[ffmpeg]>=2.31"
 ]
 
