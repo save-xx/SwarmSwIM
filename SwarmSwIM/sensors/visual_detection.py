@@ -56,7 +56,7 @@ class Detection:
     def __init__(self, simulation, detector_name="detector"):
         # create random seed
         self.rnd = simulation.rnd.spawn(1)[0]
-        
+        self.bag = {}
         self.detector_name = detector_name
         self.sim = simulation
         # initialize each agent
@@ -121,6 +121,7 @@ class Detection:
             # update return with the new detections
             dict_of_updates[name] = agent.detectors[self.detector_name].latest_detections
         # return a list with the names of the agents that have received an update
+        self.bag = dict_of_updates
         return dict_of_updates
 
     def update_detections(self, agent, detector):
@@ -194,3 +195,15 @@ class Detection:
         beta_n = self.emulate_error(beta, detector.e_beta)
         return {'distance': dist_n, 'alpha': alpha_n, 'beta': beta_n}
 
+    def _bag(self):
+        """Return sqlite friendly data for the bag"""
+        rows = []
+        for src, targets in self.bag.items():
+            if targets:  # has detections
+                for tgt, metrics in targets.items():
+                    row = {"timestep": self.sim.step_count, "source": src, "target": tgt, **metrics}
+                    rows.append(row)
+            else:  # no detections, record with NULLs
+                row = {"timestep": self.sim.step_count, "source": src, "target": None, "distance": None, "alpha": None, "beta": None}
+                rows.append(row)
+        return rows

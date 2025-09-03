@@ -142,6 +142,9 @@ class Simulator():
             self.memory()
         # execute post step plugins
         responses_post = self.execute_plugins(self.plugins_calls_poststep)
+        # save data
+        if hasattr(self, "save_plugin"):
+            self.save_plugin()
         # return all plugins outputs (combine dictionaries)
         return responses_pre | responses_post # <- fuse 2 dict into one
 

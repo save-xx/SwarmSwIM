@@ -8,7 +8,7 @@
 
     <!-- number of elements keept in the short term memory -->
     <history_length>
-        200 
+        50 
     </history_length>
 
     <!-- Describe start-up agents and add them to the simulation -->
@@ -21,8 +21,8 @@
             <state>
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->
-                0.0  0.0  69.0  0.0
-                3.0  0.0  69.0  45.0
+                0.0  0.0  1.0  0.0
+                3.0  0.0  1.0  180.0
                 <!-- Add more lines to add agents -->
             </state>
         </agent_type>

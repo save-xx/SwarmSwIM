@@ -8,8 +8,6 @@ import os
 logger = logging.getLogger(__name__)
 
 
-
-
 class MapSensor:
     def __init__(self, simulation, sensor_name, map_name, scale=1.0, method='linear'):
         """
