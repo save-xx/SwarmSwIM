@@ -3,7 +3,7 @@ import copy
 from collections import defaultdict
 from collections.abc import Iterable
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Any
 import itertools
 
@@ -72,7 +72,11 @@ class AcousticChannel:
         c_sound = SPEED_OF_SOUND, 
         max_range = MAX_RANGE
         ):
+        # private parameters to bag
+        self._event_to_save = {}
+        self._sent_to_save = []
         
+        #
         self.sim = simulation
         self.C_SOUND = c_sound
         self.MAX_RANGE = max_range
@@ -194,14 +198,19 @@ class AcousticChannel:
         """Send message from a given agent."""
         # refuse if another message is actively being transmitted
         if self.sim.time < agent.acoustic_channels[self.channel_name].release_time:
-            return False, "Refused - Already transmitting a message"
+            out = "Refused - Already transmitting a message"
+            self._sent_to_save.append((out, {'sender': agent.name}))
+            return False, out
         # refuse if collision avoidance is active and reciving
         if collsion_avoidance:
+            out = "Refused - Collision avoidance"
             if not agent.acoustic_channels[self.channel_name].status:
-                return False, "Refused - Collision avoidance"
+                self._sent_to_save.append((out, {'sender': agent.name}))
+                return False, out
         
         # send message, use unique hash for each message key
-        self.active_msgs[next(global_msg_id)] = {
+        new_id = next(global_msg_id)
+        self.active_msgs[new_id] = {
             'sender': agent.name,
             'start_loc': agent.pos,
             'front_radius': 0.0,
@@ -216,7 +225,7 @@ class AcousticChannel:
 
         # lock communication of agent until the message is fully sent
         agent.acoustic_channels[self.channel_name].release_time = self.sim.time + msg_duration
-
+        self._sent_to_save.append(("Sent", self.active_msgs[new_id]))
         return True, "Sent"
 
     def get_TimeOfDeparture(self, agent):
@@ -257,6 +266,7 @@ class AcousticChannel:
                             result[name] = copy.deepcopy(self._return_msg_to_agent(agent, msg)) 
                         # remove id from id list
                         incoming.id.remove(id)
+        self._event_to_save = result
         return result
 
     def _evolve_waves(self):
@@ -365,4 +375,79 @@ class AcousticChannel:
 
 
         
+    def _bag(self):
+        """Collect SQLite friendly output."""
+        sent_rows = []
+        timestep = self.sim.step_count
 
+        # Process events
+        for receiver, event in self._event_to_save.items():
+            msg = asdict(event) if is_dataclass(event) else event
+            # Handle pos_at_detection explicitly
+            if msg["pos_at_detection"] is None:
+                x, y, z = None, None, None
+            else:
+                arr = np.asarray(msg["pos_at_detection"]).flatten()
+                x, y, z = arr.tolist()
+            # append each event as a line
+            sent_rows.append({
+                "timestep": timestep,
+                "status": "Received",
+                "receiver": receiver,
+                "sender": msg["sender"],
+                "payload": msg["payload"],
+                "intact": msg["intact"],
+                "ToD_raw": msg["ToD_raw"],
+                "ToD_exact": msg["ToD_exact"],
+                "ToA_raw": msg["ToA_raw"],
+                "ToA_exact": msg["ToA_exact"],
+                "x_at_detection": x,
+                "y_at_detection": y,
+                "z_at_detection": z,
+                "perfect_range": msg["perfect_range"],
+                "ping_range": msg["ping_range"],
+                "doppler_velocity": msg["doppler_velocity"],
+                # special column for send event
+                "duration": None,
+                "x_start_loc": None,
+                "y_start_loc": None,
+                "z_start_loc": None,
+            })
+
+        # Process sending events if any
+        if self._sent_to_save:
+            for sent in self._sent_to_save:
+                status, sent_data = sent
+                
+                sent_rows.append ({
+                    "timestep": timestep,
+                    # special column for send event
+                    "status": status,
+                    "duration": sent_data.get("duration"),
+                    "x_start_loc": sent_data["start_loc"][0] if status == "Sent" else None,
+                    "y_start_loc": sent_data["start_loc"][1] if status == "Sent" else None,
+                    "z_start_loc": sent_data["start_loc"][2] if status == "Sent" else None,
+                    # standard values and recivers
+                    "receiver": None,
+                    "sender": sent_data.get("sender"),
+                    "payload": sent_data.get("payload") if status == "Sent" else None,
+                    "intact": None,
+                    "ToD_raw": sent_data.get("tod_raw") if status == "Sent" else None,
+                    "ToD_exact": sent_data.get("tod_exact") if status == "Sent" else None,
+                    "ToA_raw": None,
+                    "ToA_exact": None,
+                    "x_at_detection": None,
+                    "y_at_detection": None,
+                    "z_at_detection": None,
+                    "perfect_range": None,
+                    "ping_range": None,
+                    "doppler_velocity": None,
+                })
+
+
+        # Empty the sending bag memory
+        self._sent_to_save = []
+
+        # Return SQLite-friendly list of dicts
+        return sent_rows
+    

@@ -19,6 +19,7 @@ dependencies = [
   "opencv-python",
   "pyqtgraph>=0.13",
   "PyQt5",
+  "openpyxl",
   "imageio[ffmpeg]>=2.31"
 ]
 

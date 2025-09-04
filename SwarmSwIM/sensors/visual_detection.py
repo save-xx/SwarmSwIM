@@ -201,9 +201,9 @@ class Detection:
         for src, targets in self.bag.items():
             if targets:  # has detections
                 for tgt, metrics in targets.items():
-                    row = {"timestep": self.sim.step_count, "source": src, "target": tgt, **metrics}
+                    row = {"timestep": self.sim.step_count, "observer": src, "target": tgt, **metrics}
                     rows.append(row)
             else:  # no detections, record with NULLs
-                row = {"timestep": self.sim.step_count, "source": src, "target": None, "distance": None, "alpha": None, "beta": None}
+                row = {"timestep": self.sim.step_count, "observer": src, "target": None, "distance": None, "alpha": None, "beta": None}
                 rows.append(row)
         return rows

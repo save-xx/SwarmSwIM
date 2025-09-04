@@ -104,3 +104,25 @@ class DataBagger:
             self.conn.close()
             self.conn = None
             logger.info("Database connection closed")
+
+
+# Additional ultility, convert to csv
+def sqlite_to_excel(name):
+    sqlite_file = name + ".db"
+    excel_file = name + ".xlsx"
+    # Connect to SQLite
+    conn = sqlite3.connect(sqlite_file)
+
+    # Create Excel writer
+    with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+        # Get all table names in SQLite
+        tables = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table';", conn)
+        
+        for table in tables["name"]:
+            # Read each table into a DataFrame
+            df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+            # Write to Excel sheet with table name
+            df.to_excel(writer, sheet_name=table, index=False)
+
+    conn.close()
+    print(f"✅ Converted {sqlite_file} → {excel_file}")
