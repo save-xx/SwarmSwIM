@@ -1,6 +1,7 @@
 import signal
 import sys
 import logging
+import atexit
 from itertools import chain
 import sqlite3
 import pandas as pd
@@ -21,13 +22,15 @@ class DataBagger:
 
         # name
         now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"{name}_{now}.db"
-        logger.info(f"Recording simulation data in {filename}")
+        self.filename = f"{name}_{now}"
+        logger.info(f"Recording simulation data in {self.filename}.db")
         # create pd structure and append to file
-        self.conn = sqlite3.connect(filename)
+        self.conn = sqlite3.connect(self.filename + ".db")
 
         # Install Ctrl+C handler
         signal.signal(signal.SIGINT, self._handle_sigint)
+        # execute closure at normal exit
+        atexit.register(self.close)  
 
     def __call__(self):
         """Collect and save all valuable inormation at this timestep"""
@@ -99,12 +102,17 @@ class DataBagger:
         sys.exit(0)
 
     def close(self):
+        # close database
         if self.conn:
             self.conn.commit()
             self.conn.close()
             self.conn = None
             logger.info("Database connection closed")
-
+        # try conversion in excel
+        try:
+            sqlite_to_excel(self.filename)
+        except Exception as e:
+            logger.warning(f"Could not conver bag to xlsx: {e}")
 
 # Additional ultility, convert to csv
 def sqlite_to_excel(name):

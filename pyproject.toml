@@ -23,8 +23,14 @@ dependencies = [
   "imageio[ffmpeg]>=2.31"
 ]
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 
 [tool.setuptools.package-data]
-SwarmSwIM = ["*.xml"]
+"SwarmSwIM" = ["*.xml"]
+
+[project.scripts]
+SwarmSwIM = "SwarmSwIM.utility.cli:main"

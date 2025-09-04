@@ -26,7 +26,7 @@ colors = color_cycle(hues=30)
 # --------------
 # Animator class
 # --------------
-class Simulator2D:
+class Visualizer2D:
     def __init__(
             self,
             simulation,
@@ -295,5 +295,5 @@ if __name__ == "__main__":
         "record": True,
     }
 
-    sim = Simulator2D(S, my_func, properties=properties)
+    sim = Visualizer2D(S, my_func, properties=properties)
     sim.run()
