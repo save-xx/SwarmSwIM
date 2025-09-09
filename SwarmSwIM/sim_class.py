@@ -34,17 +34,37 @@ class Simulator():
         # initialize randomness < if self.seed is None then a random rng is made
         self.rnd = np.random.default_rng(self.seed)
         # initialize file agents
-        self.agents_from_file()
-        
-    def agents_from_file(self):
-        """Load agents based on simulation XML specification."""
-        data = sim_functions.parse_agents(self._simulation_filepath)
-        for key, value in data.items():
-            self._add(Agent(key,value[0],value[1],value[2],self.seed))
+        self._agents_from_file()
 
     def __iter__(self):
         """Overload the iterator to provide agents"""
         return iter(self.agents.items())
+
+    def __getitem__(self, key):
+        """Allow dict-style access to agents"""
+        return self.agents[key]
+    
+    def __setitem__(self, key, value):
+        """Allow dict-style assignment"""
+        if not isinstance(key, str):
+            raise TypeError(f"Agent name must be a string type. Passed {key}")
+        if not isinstance(value, Agent):
+            raise TypeError(f"Agent object must be a Agent instance. Passed a {type(value)}")
+        self.agents[key] = value
+
+    def __contains__(self, key):
+        """Enable `if key in S:` syntax"""
+        return key in self.agents
+
+    def __len__(self):
+        """Number of agents"""
+        return len(self.agents)
+
+    def _agents_from_file(self):
+        """Load agents based on simulation XML specification."""
+        data = sim_functions.parse_agents(self._simulation_filepath)
+        for key, value in data.items():
+            self._add(Agent(key,value[0],value[1],value[2],self.seed))
 
     # --------------------------
     # Short term memory handling

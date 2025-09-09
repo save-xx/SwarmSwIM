@@ -1,5 +1,6 @@
 import signal
 import sys
+import os
 import logging
 import atexit
 from itertools import chain
@@ -43,7 +44,6 @@ class DataBagger:
         for name, agent in self.sim.agents.items():
             pos = {"x": agent.pos[0], "y": agent.pos[1], "z": agent.pos[2]}
             psi = {"psi": agent.psi}
-            internal_clock = {"internal_clock": agent.internal_clock}
             measured_depth = {"measured_depth": agent.measured_depth}
             measured_heading = {"measured_heading": agent.measured_heading}
             measured_pos = {"measured_x": agent.measured_pos[0], "measured_y": agent.measured_pos[1]}
@@ -67,7 +67,7 @@ class DataBagger:
                 "cmd_Fy": agent.cmd_forces[1]
             }
 
-            row = {**idx, **time, **pos, **psi, **internal_clock,
+            row = {**idx, **time, **pos, **psi,
                 **measured_depth, **measured_heading, **measured_pos,
                 **control, **cmds}
 
@@ -118,6 +118,11 @@ class DataBagger:
 def sqlite_to_excel(name):
     sqlite_file = name + ".db"
     excel_file = name + ".xlsx"
+    
+    if not os.path.exists(sqlite_file):
+        logger.warning(f"⚠️ {sqlite_file} not found. No Excel file created.")
+        return    
+    
     # Connect to SQLite
     conn = sqlite3.connect(sqlite_file)
 
@@ -133,4 +138,4 @@ def sqlite_to_excel(name):
             df.to_excel(writer, sheet_name=table, index=False)
 
     conn.close()
-    print(f"✅ Converted {sqlite_file} → {excel_file}")
+    logger.warning(f"✅ Converted {sqlite_file} → {excel_file}")

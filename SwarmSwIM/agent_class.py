@@ -1,6 +1,6 @@
 """File defining Agent Class."""
 from . import sim_functions
-from .sim_functions import parse_matrix
+from .sim_functions import parse_matrix, xml_to_float, generic_input
 import numpy as np
 import xml.etree.ElementTree as ET
 import os
@@ -51,9 +51,8 @@ class Agent():
         # Load agent parameters from xml
         self.agent_type = agent_xml
         self._agent_filepath = sim_functions.get_xml_path(agent_xml)
-        self.parse_agent_parameters(agent_xml)
+        self.parse_agent_parameters()
         # Parameter initialization
-        self.internal_clock = 0.0
         self.incurrent_velocity = np.array([0, 0])
         # Sensors initialization
         self.measured_depth = initialPosition[2]
@@ -91,18 +90,11 @@ class Agent():
     def cmd_local_vel(self, input):
         self._cmd_local_vel = generic_input(input)
 
-    def parse_agent_parameters(self, input_path):
+    def parse_agent_parameters(self):
         """Read the xml file for the agents charateristics."""
         # Utility
         # --------------------
         # Local Function - parsing of vectors and matrix from XML
-
-        def read_float_parameter(name, default_value):
-            """Create an attiribute with the string input name and populate."""
-            if sim_agent.find(name) is not None:
-                setattr(self, name, float(sim_agent.find(name).text))
-            else:
-                setattr(self, name, float(default_value))
 
         def read_2d_parameters(name):
             """
@@ -126,7 +118,7 @@ class Agent():
             raise ValueError("The XML does not contain a <sim_agent> element.")
         # --------------------
         # Parse mass parameters
-        read_float_parameter('mass', 1.0)
+        self.mass = xml_to_float(sim_agent.find('mass'), 1.0)
         
         if sim_agent.find('dimentions') is not None:
             self.dimentions = parse_matrix(sim_agent.find('dimentions'))
@@ -138,11 +130,13 @@ class Agent():
         else:
             self.added_mass = np.zeros([2, 2])
         self.tot_mass = self.added_mass + np.array([[self.mass, 0], [0, self.mass]])
+
         # selection of control scheme [REQUIRED]
         self.depth_control = sim_agent.find('depth_control').text
         self.heading_control = sim_agent.find('heading_control').text
         self.planar_control = sim_agent.find('planar_control').text
-        # Parse damping parameters < at least one is required >
+        
+        # Parse damping parameters
         if sim_agent.find('linear_damping') is not None: 
             self.linear_damping = parse_matrix(sim_agent.find('linear_damping'))
         else:
@@ -151,56 +145,38 @@ class Agent():
             self.quadratic_damping = parse_matrix(sim_agent.find('quadratic_damping'))
         else: 
             self.quadratic_damping = np.identity(2)
+        
         # Parse Control depth parameters
-        read_float_parameter('step_depth', 0.0)
-        read_float_parameter('proportional_depth', 0.0)
-        read_float_parameter('heave_limit', 0.0)
+        self.step_depth = xml_to_float(sim_agent.find("step_depth"), default=0.0)
+        self.proportional_depth = xml_to_float(sim_agent.find("proportional_depth"), default=0.0)
+        self.heave_limit = xml_to_float(sim_agent.find("heave_limit"), default=0.0)
         # Parse Control heading
-        read_float_parameter('step_heading', 0.0)
-        read_float_parameter('proportional_heading', 0.0)
-        read_float_parameter('yawrate_limit', 0.0)
+        self.step_heading = xml_to_float(sim_agent.find("step_heading"), default=0.0)
+        self.proportional_heading = xml_to_float(sim_agent.find("proportional_heading"), default=0.0)
+        self.yawrate_limit = xml_to_float(sim_agent.find("yawrate_limit"), default=0.0)
         # Parse Control planar
-        read_float_parameter('step_planar', 0.0)
-        read_2d_parameters('vel_limit')
-        read_float_parameter('yawrate_limit', 0.0)
+        self.step_planar = xml_to_float(sim_agent.find("step_planar"), default=0.0)
+        read_2d_parameters("vel_limit")
+        self.yawrate_limit = xml_to_float(sim_agent.find("yawrate_limit"), default=0.0)
 
         # List of the names to be added in the noise parameters
         list_of_noises = ['e_depth', 'e_heave', 'e_heading', 'e_yawrate',
                           'e_position', 'e_local_vel', 'e_inertial_vel',
                           'e_local_force']
+        
         # parse navigational noises
         for name in list_of_noises:
             read_2d_parameters(name)
-        # additional clock drift error
-        self.clock_drift = float(sim_agent.find('clock_drift').text) \
-            if sim_agent.find('clock_drift') is not None \
-            else 0
-        # TODO consider adding bias randomization
-        # --------------------
-        # Parse Sensors <- TODO consider delocating
-        sensors_root = root.find('sensors')
-        self.sensors = {}
-        if not (sensors_root is None):      # skip if not defined
-            # NN Detector
-            detector_root = sensors_root.find('NNDetector')
-            if detector_root:
-                self.sensors['NNDetector'] = {'period': float(detector_root.find('period').text)}
-                self.sensors['NNDetector']['field_of_view'] = parse_matrix(detector_root.find('field_of_view'))
-                self.sensors['NNDetector']['visibility_model'] = detector_root.find('visibility_model').text
-                if detector_root.find('points') is not None:
-                    self.sensors['NNDetector']['points'] = parse_matrix(detector_root.find('points'))
-                # Parse Sensor errors
-                self.sensors['e_NND_distance'] = parse_matrix(detector_root.find('e_distance')) if detector_root.find('e_distance') is not None else np.zeros(2)
-                self.sensors['e_NND_alpha'] = parse_matrix(detector_root.find('e_alpha')) if detector_root.find('e_alpha') is not None else np.zeros(2)
-                self.sensors['e_NND_beta'] = parse_matrix(detector_root.find('e_beta')) if detector_root.find('e_beta') is not None else np.zeros(2)
-                # add detector element
-                self.NNDetector = {'time_lapsed': self.rnd.uniform(0, self.sensors['NNDetector']['period'])}
-            # Acustic Channel
-            acoustic_root = sensors_root.find('Acoustic_Ranging')
-            if acoustic_root:
-                self.sensors['ac_msg_length'] = float(acoustic_root.find('msg_length').text)
-                self.sensors['e_ac_range'] = parse_matrix(acoustic_root.find('e_ac_range')) if acoustic_root.find('e_ac_range') is not None else np.zeros(2)
-                self.sensors['e_ac_doppler'] = parse_matrix(acoustic_root.find('e_doppler')) if acoustic_root.find('e_doppler') is not None else np.zeros(2)
+        
+        # currents
+        use_currents = sim_agent.find("use_currents")
+        no_current  = (use_currents is None 
+                        or use_currents.text is None 
+                        or use_currents.text.strip().lower() in ("", "0", "false"))
+        if no_current:
+            self.use_currents = False
+        else:
+             self.use_currents = use_currents.text
 
     def emulate_error(self, data, error):
         """Alter the input data to simulate measurment errors."""
@@ -210,18 +186,17 @@ class Agent():
 
     def tick(self):
         """Update the Agent tick."""
-        self.update_internal_clock()
-        self.update_sensors()
-        self.update_heading()
-        self.update_depth()
-        self.update_planar(self.Dt)
+        self._update_feedback_sensors()
+        self._update_heading()
+        self._update_depth()
+        self._update_planar(self.Dt)
 
-    def update_internal_clock(self):
-        """Keep track of the internal time clock."""
-        self.internal_clock += self.Dt*(1+self.clock_drift*1e-6)
 
-    def update_sensors(self):
-        """Update value of control feedback sensor."""
+    def _update_feedback_sensors(self):
+        """
+        Update value of control feedback sensor.
+        Specifically affects the sensors involved in emulating the control scheme applied to the agent.
+        """
         self.measured_depth = self.emulate_error(self.pos[2], self.e_depth)
         self.measured_heading = (self.emulate_error(
             self.psi, self.e_heading)) % 360
@@ -230,7 +205,7 @@ class Agent():
             self.emulate_error(self.pos[1], self.e_position)
             ])
 
-    def update_depth(self):
+    def _update_depth(self):
         """Update Agent depth, based on selected behavior."""
         correction = self.cmd_depth - self.measured_depth
         if "ideal" == self.depth_control:
@@ -251,7 +226,7 @@ class Agent():
         elif "heave" == self.depth_control:
             self.pos[2] += self.emulate_error(self.cmd_heave, self.e_heave) * self.Dt
 
-    def update_heading(self):
+    def _update_heading(self):
         """Update Agent heading, based on selected behavior."""
         correction = (self.cmd_heading - self.measured_heading) % 360
         if correction > 180:
@@ -276,7 +251,7 @@ class Agent():
         # return result in the [0,360) range
         self.psi %= 360
 
-    def update_planar(self, Dt):
+    def _update_planar(self, Dt):
         """Tick based update of the planar position."""
         def get_emulated_velocities():
             return np.array([self.emulate_error(self.cmd_local_vel[0], self.e_local_vel),
@@ -384,35 +359,6 @@ class Agent():
         if headingDegrees:
             self.cmd_heading = headingDegrees
 
-
-NUM_TYPES = (int, float, np.integer, np.floating)
-
-
-def generic_input(input):
-    """Return a 2 element np.array of a generic input."""
-    # Handle np.arrays as inputs
-    if isinstance(input, np.ndarray):
-        if 2 == np.size(input):
-            return input.squeeze().astype('float')
-        elif 1 == np.size(input):
-            return np.array([float(input), 0.0])
-        else:
-            raise ValueError(f'Input is of not accetable size, \
-                             allowed 1 or 2, current {np.size(input)}')
-    # Handle lists
-    elif isinstance(input, (list, tuple)) and all(isinstance(x, NUM_TYPES) for x in input):
-        if len(input) == 2:
-            return np.array(input).astype('float')
-        elif len(input) == 1:
-            return np.array([float(input[0]), 0.0])
-        else:
-            raise ValueError(f'Input is of not accetable size, \
-                             allowed 1 or 2, current {len(input)}')
-    # Handle single numbers
-    elif isinstance(input, NUM_TYPES):
-        return np.array([float(input), 0.0])
-    else:
-        raise ValueError('Input type or length incorrect')
 
 
 if __name__ == '__main__':

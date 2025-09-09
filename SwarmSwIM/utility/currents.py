@@ -31,9 +31,9 @@ class Currents:
         self.is_local_waves, self.local_waves = self.unpack_local_waves(envrioment_root)
         # Initialize class based currents
         if self.is_vortex:
-            self.set_vortex(simulation.rnd)
+            self.set_vortex(rnd=simulation.rnd)
         if self.is_noise:
-            self.set_noise(simulation.rnd)
+            self.set_noise(rnd=simulation.rnd)
 
     def __call__(self):
         """Calcualte and apply current disturbances."""
@@ -43,7 +43,6 @@ class Currents:
             self.simulation.time,
             self.global_waves
             )
-
         # calculate agent dependent current effects, for each agent
         for name, agent in self.simulation.agents.items():
             if not hasattr(agent, 'use_currents') or not agent.use_currents:
@@ -56,9 +55,8 @@ class Currents:
                 if self.is_noise:
                     agent_current_vector += self._noise_inst.calculate_noises(
                         self.simulation.time,
-                        self.agent
+                        agent
                     )
-
                 # Global Waves
                 if self.is_global_waves:
                     agent_current_vector += global_waves_vector
@@ -67,7 +65,7 @@ class Currents:
                 if self.is_local_waves:
                     agent_current_vector += calculate_local_waves(
                         self.simulation.time,
-                        self.agent,
+                        agent,
                         self.local_waves
                     )
 
@@ -204,7 +202,6 @@ class Currents:
         size = kwargs['size'] if 'size' in kwargs else self.vortex['size']
         # initiate class
         self._vortex_inst = VortexField(
-            self, 
             density=density, 
             intensity=intensity, 
             rng=self.simulation.rnd
@@ -218,7 +215,7 @@ class Currents:
         intensity = kwargs['intensity'] if 'intensity' in kwargs else self.noise['intensity']
         # initiate class
         self._noise_inst = TimeNoise(
-            self, 
+            self.simulation.time, 
             freq=hz, 
             intensity=intensity, 
             rng=self.simulation.rnd

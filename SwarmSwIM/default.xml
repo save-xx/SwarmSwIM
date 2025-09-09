@@ -56,8 +56,11 @@
         <e_inertial_vel>0.0 0.0</e_inertial_vel> <!-- m/s -->
         <e_local_force>0.0 0.0</e_local_force> <!-- N -->
         <clock_drift>0.0</clock_drift> <!-- PPM -->
-        
+
+        <use_currents>all</use_currents>
+
     </sim_agent>
+
 
     <!-- Add sensors to Agent -->
     <sensors>

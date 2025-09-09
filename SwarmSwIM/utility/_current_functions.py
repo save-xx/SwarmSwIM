@@ -72,7 +72,6 @@ class TimeNoise:
         # linear interpolate on time
         t = (now - self.time) / self.Tslot
         current = (1 - t) * agent.current_noise[0] + t * agent.current_noise[1]
-
         # do once when the sim time advances
         if self.t_min1 != now:
             self.t_min1 = now

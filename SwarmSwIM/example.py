@@ -39,7 +39,7 @@ properties = {
     "bg_color": 'w', # background color (white)
     "grid": True, # add grid visualization
     "color_by_type": False, # set legend - individual names 
-    "record": True, # creade video recording
+    "record": False, # creade video recording
     }
 
 # run combined simulation and visualization

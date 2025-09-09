@@ -7,20 +7,13 @@ from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Any
 import itertools
 
-from SwarmSwIM.sim_functions import parse_matrix
+from SwarmSwIM.sim_functions import parse_matrix, xml_to_float
 
 # generate unique ids for each msg
 global_msg_id = itertools.count()
 # Default values (if not specified)
 SPEED_OF_SOUND = 1500. # m/s
 MAX_RANGE = 2000. # m
-
-
-def _to_float(text, default=0.0):
-    """Turn single value tag to float"""
-    if text is None or text.strip() == "":
-        return default
-    return float(text)
 
 
 
@@ -143,10 +136,10 @@ class AcousticChannel:
     def unpack_acoustic_channel(self, root):
         """read parameters for the specified channel."""
         # update speed of sound if specified
-        c_update = _to_float(root.find("speed_of_sound").text, default=self.C_SOUND)
+        c_update = xml_to_float(root.find("speed_of_sound"), default=self.C_SOUND)
         self.C_SOUND = c_update if c_update > 0 else self.C_SOUND
         # update max range if specified
-        max_update = _to_float(root.find("max_range").text, default=self.MAX_RANGE)
+        max_update = xml_to_float(root.find("max_range"), default=self.MAX_RANGE)
         self.MAX_RANGE = max_update if max_update  > 0 else self.MAX_RANGE
         # load noise values range
         self.e_range = parse_matrix(root.find('e_acoustic_range'))
@@ -157,15 +150,15 @@ class AcousticChannel:
         if self.e_doppler.size == 0:
             self.e_doppler = np.zeros(2)
         # load noise values computational delay
-        self.computational_delay = _to_float(root.find("delay_acoustic_send").text)
+        self.computational_delay = xml_to_float(root.find("delay_acoustic_send"))
 
         self._e_delay = parse_matrix(root.find('e_delay'))
         if self._e_delay.size == 0:
             self._e_delay = np.zeros(2)
         # load drift value
-        self._PPM  = _to_float(root.find("drift").text)
+        self._PPM  = xml_to_float(root.find("drift"))
         # load syncronization gap between agent
-        self._sync_gap = _to_float(root.find("sync_gap").text)
+        self._sync_gap = xml_to_float(root.find("sync_gap"))
 
     
     def populate_acoustic_channel(self, channel_name: str, agent):
