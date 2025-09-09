@@ -324,9 +324,17 @@ class Agent():
         # Save last step state
         self.last_step_pos = self.pos.copy()
 
-    # Built-in command packages ##
 
-    def cmd_fhd(self, forceNewton, headingDegrees, depthMeters):
+    # =========================
+    # Built-in command packages 
+    # =========================
+
+
+    def cmd_ForceHeadingDepth(self, 
+                              forceNewton: float | list | np.ndarray | None = None, 
+                              headingDegrees: float | None = None, 
+                              depthMeters: float | None = None
+                              ):
         """
         Control in Planar force, step heading and depth.
 
@@ -338,11 +346,18 @@ class Agent():
         - depthMeters: (float)
             desired depth in meters
         """
-        self.cmd_forces = forceNewton
-        self.cmd_heading = headingDegrees
-        self.cmd_depth = depthMeters
+        if forceNewton is not None:
+            self.cmd_forces = forceNewton
+        if headingDegrees is not None:
+            self.cmd_heading = headingDegrees % 360
+        if depthMeters is not None:
+            self.cmd_depth = depthMeters
 
-    def cmd_xyz_phi(self, positionMeters, headingDegrees=None):
+
+    def cmd_PositionHeading(self, 
+                            positionMeters, 
+                            headingDegrees: float | None = None
+                            ):
         """
         Position command,  planar step control, heading and depth.
 
@@ -353,10 +368,11 @@ class Agent():
             heading of the agent.
         """
         # Set desired planar Coordinates
+        # TODO make cmd_planar safe input as cmd_forces 
         self.cmd_planar = positionMeters[0:2]
         if 3 == len(positionMeters):
             self.cmd_depth = positionMeters[3]
-        if headingDegrees:
+        if headingDegrees is not None:
             self.cmd_heading = headingDegrees
 
 
