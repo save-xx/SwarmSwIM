@@ -29,6 +29,7 @@ class Agent():
         # private
         self._cmd_force = np.array([0.0, 0.0])
         self._cmd_local_vel = np.array([0.0, 0.0])
+        self._cmd_planar = np.array([0.0, 0.0])
         # Fixed time division
         self.Dt = 0.1 # < placeholder overwritten by simulator
         # Set inital condition
@@ -51,7 +52,7 @@ class Agent():
         # Load agent parameters from xml
         self.agent_type = agent_xml
         self._agent_filepath = sim_functions.get_xml_path(agent_xml)
-        self.parse_agent_parameters()
+        self._parse_agent_parameters()
         # Parameter initialization
         self.incurrent_velocity = np.array([0, 0])
         # Sensors initialization
@@ -71,7 +72,7 @@ class Agent():
         self.other_forces = np.array([0, 0])
 
     def __repr__(self):
-        # NOTE: by design, the name of each agent must be unique.
+        # NOTE: by design, the name of each agent is enforced to be unique.
         return (f"Agent<{self.name}>")
 
     @property
@@ -90,7 +91,19 @@ class Agent():
     def cmd_local_vel(self, input):
         self._cmd_local_vel = generic_input(input)
 
-    def parse_agent_parameters(self):
+    @property
+    def cmd_planar(self):
+        return self._cmd_planar
+
+    @cmd_planar.setter
+    def _cmd_planar(self, input):
+        if len(input) != 2:
+            raise ValueError(f"cmd_planar input must be of length 2: passed {input}")
+        self._cmd_local_vel = np.array(input, dtype=float)
+
+    # ================================
+
+    def _parse_agent_parameters(self):
         """Read the xml file for the agents charateristics."""
         # Utility
         # --------------------
@@ -185,7 +198,10 @@ class Agent():
         return data
 
     def tick(self):
-        """Update the Agent tick."""
+        """
+        Update the Agent.
+        Advances the simulation forward one step for the agent.
+        """
         self._update_feedback_sensors()
         self._update_heading()
         self._update_depth()
@@ -231,14 +247,17 @@ class Agent():
         correction = (self.cmd_heading - self.measured_heading) % 360
         if correction > 180:
             correction -= 360
+
         if "ideal" == self.heading_control:
             self.psi += correction
+
         elif "step" == self.heading_control:
             step = (self.Dt*self.step_heading)
             if abs(correction) < step:
                 self.psi += correction
             else:
                 self.psi += step * np.sign(correction)
+
         elif "proportional" == self.heading_control:
             r = self.proportional_heading * correction
             if r > self.yawrate_limit:
@@ -246,6 +265,7 @@ class Agent():
             if r < -self.yawrate_limit:
                 r = -self.yawrate_limit
             self.psi += self.emulate_error(r, self.e_yawrate)*self.Dt
+
         elif "yawrate" == self.heading_control:
             self.psi += self.emulate_error(self.cmd_yawrate, self.e_yawrate) * self.Dt
         # return result in the [0,360) range
@@ -271,6 +291,7 @@ class Agent():
         if "ideal" == self.planar_control:
             self.pos[0] += x_correction
             self.pos[1] += y_correction
+
         elif "step" == self.planar_control:
             step = (self.Dt*self.step_planar)
             d_correction = np.linalg.norm([x_correction, y_correction])
@@ -280,6 +301,7 @@ class Agent():
             else:
                 self.pos[0] += step*x_correction/d_correction
                 self.pos[1] += step*y_correction/d_correction
+
         elif "local_velocity" == self.planar_control:
             emulated_velocities = get_emulated_velocities()
             self.pos[0] += (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
@@ -330,7 +352,7 @@ class Agent():
     # =========================
 
 
-    def cmd_ForceHeadingDepth(self, 
+    def set_ForceHeadingDepth(self, 
                               forceNewton: float | list | np.ndarray | None = None, 
                               headingDegrees: float | None = None, 
                               depthMeters: float | None = None
@@ -354,8 +376,8 @@ class Agent():
             self.cmd_depth = depthMeters
 
 
-    def cmd_PositionHeading(self, 
-                            positionMeters, 
+    def set_PositionHeading(self, 
+                            positionMeters: list | np.ndarray, 
                             headingDegrees: float | None = None
                             ):
         """
@@ -368,13 +390,138 @@ class Agent():
             heading of the agent.
         """
         # Set desired planar Coordinates
-        # TODO make cmd_planar safe input as cmd_forces 
         self.cmd_planar = positionMeters[0:2]
         if 3 == len(positionMeters):
             self.cmd_depth = positionMeters[3]
         if headingDegrees is not None:
             self.cmd_heading = headingDegrees
 
+
+    def set_ForceCmd(self, 
+                     forceNewton: float | list | np.ndarray,
+                     enforce: bool = False
+                     ):
+        """
+        Set force command.
+        - forceNewton: (array-like size 2 or float)
+            planar force vector in Newton, referred to body frame.
+            If a single value is provvided, it is referred to the x-axis.
+        - enforce: (bool, default `False`)
+            enforce planar control to `local_forces` mode.
+        """
+        self.cmd_forces = forceNewton
+        if enforce:
+            self.planar_control = "local_forces"
+
+
+    def set_VelocityCmd(self, 
+                        velocity: float | list | np.ndarray,
+                        mode: str | None = None
+                        ):
+        """
+        Set velocity command.
+        - velocity: (array-like size 2 or float)
+            planar velocity vector in Newton, referred to body frame.
+            If a single value is provvided, it is referred to the x-axis.
+        - mode: (str or None, default `None`)
+            if indicated, set planar control to the specified mode.
+        """
+        self.cmd_local_vel = velocity
+        if not mode:
+            return
+        if not mode in ("local_velocity", "inertial_velocity"):
+            raise ValueError(f"mode must be either `local_velocity` or `inertial_velocity`. Input {mode}")
+        self.planar_control = mode
+
+
+    def set_WaypointCmd(self, 
+                        waypoint: float | list | np.ndarray,
+                        mode: str | None = None
+                        ):
+        """
+        Set a planar position command (waypoint).
+        - waypoint: (array-like size 2)
+            planar velocity vector in Newton, referred to body frame.
+        - mode: (str or None, default `None`)
+            if indicated, set planar control to the specified mode.
+        """
+        self.cmd_planar = waypoint
+        if not mode:
+            return
+        if not mode in ("ideal", "step"):
+            raise ValueError(f"mode must be either `ideal` or `step`. Input {mode}")
+        self.planar_control = mode
+
+
+    def set_Heading(self, 
+                    headingDegrees: float,
+                    mode: str | None = None
+                    ):
+        """
+        Set heading command.
+        - headingDegrees: float
+            heading, expressed in degrees, NED conventions (0 is North)
+        - mode: (str or None, default `None`)
+            if indicated, set planar control to the specified mode.
+        """
+        self.cmd_heading = headingDegrees % 360
+        if not mode:
+            return
+        if not mode in ("ideal", "step", "proportional"):
+            raise ValueError(f"mode must be either `ideal`,  `step` or `proportional`. Input {mode}")
+        self.heading_control = mode
+
+
+    def set_Yawrate(self, 
+                    yawrate: float,
+                    enforce: bool = False
+                    ):
+        """
+        Set yawrate command.
+        - yawrate: float
+            yawrate, expressed in degrees per second, NED conventions.
+        - enforce: (bool, default `False`)
+            if indicated, set planar control to the specified mode.
+        """
+        self.cmd_yawrate = yawrate
+        if enforce:
+            self.heading_control = "yawrate"
+
+
+    def set_Depth(self, 
+                    depthMeters: float,
+                    mode: str | None = None
+                    ):
+        """
+        Set depth command.
+        - depthMeters: float
+            depth, expressed in meters, NED conventions (positive is down).
+        - mode: (str or None, default `None`)
+            if indicated, set planar control to the specified mode.
+        """
+        self.cmd_depth = depthMeters
+        if not mode:
+            return
+        if not mode in ("ideal", "step", "proportional"):
+            raise ValueError(f"mode must be either `ideal`,  `step` or `proportional`. Input {mode}")
+        self.depth_control = mode
+
+
+    def set_Heave(self, 
+                    heave: float,
+                    enforce: bool = False
+                    ):
+        """
+        Set heave (descent/ascend speed) command.
+        - heave: float
+            yawrheaveate, expressed in meters per second, NED conventions (positive is down).
+        - mode: (bool, default `False`)
+            if indicated, set planar control to the specified mode.
+        """
+        self.cmd_heave = heave
+        if enforce:
+            self.depth_control = "heave"
+    
 
 
 if __name__ == '__main__':

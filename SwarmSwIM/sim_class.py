@@ -53,7 +53,7 @@ class Simulator():
         self.agents[key] = value
 
     def __contains__(self, key):
-        """Enable `if key in S:` syntax"""
+        """Enable `if key in S:` syntax."""
         return key in self.agents
 
     def __len__(self):
@@ -66,9 +66,24 @@ class Simulator():
         for key, value in data.items():
             self._add(Agent(key,value[0],value[1],value[2],self.seed))
 
-    # --------------------------
+    def get_time(self):
+        """Return simulation time."""
+        return self.time
+    
+    def get_count(self):
+        """Return simulation step count."""
+        return self.step_count
+
+    def get_states(self):
+        """return state of each agent in a dictionary."""
+        output = {}
+        for name, agent in self.agents.items():
+            output[name] = [agent.pos[0], agent.pos[1], agent.pos[2], agent.psi]
+        return output
+
+    # ===================
     # Short term memory handling
-    # --------------------------
+    # ===================
 
     @property
     def has_memory(self):
@@ -81,9 +96,9 @@ class Simulator():
     def disable_memory(self):
         self.memory = None
 
-    # ------------------
+    # ===================
     # Add/ Remove agents
-    # ------------------
+    # ===================
 
     # Internal methods to add a single agent from the simulation
     def _add(self, new_agent):   
@@ -174,13 +189,6 @@ class Simulator():
         return (B.pos-A.pos)
     
     
-    @property
-    def states(self):
-        '''return state of each agent in a dictionary'''
-        output = {}
-        for agent in self.agents:
-            output[agent.name]=[agent.pos[0],agent.pos[1],agent.pos[2],agent.psi]
-        return output
 
 if __name__=="__main__":
 
