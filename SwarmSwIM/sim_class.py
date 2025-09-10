@@ -12,9 +12,39 @@ logger = logging.getLogger(__name__)
 class Simulator():
     def __init__(self, timeSubdivision=1.0, sim_xml="simulation.xml"):
         """
-        Simulation Object
-        - timeSubdivision: (float), unit in seconds, time interval used for each simulation step.
-        - sim_xml: (string) name of XML file describing the simulation parameters
+        Initialize a simulation environment.
+
+        The Simulator class manages the time evolution of multiple agents, 
+        executes plugins, handles short-term memory, and provides utilities 
+        to add, remove, or query agents.
+
+        Parameters
+        ----------
+        timeSubdivision : float, optional
+            Time step used for the simulation in seconds. Each call to `tick()` 
+            advances the simulation by this amount. Default is 1.0 s.
+        
+        sim_xml : str, optional
+            Path to the XML file describing the simulation setup, including agents 
+            and their parameters. Default is `"simulation.xml"`.
+        
+        Attributes
+        ----------
+        Dt : float
+            Time step of the simulation (seconds).
+        time : float
+            Current simulation time.
+        step_count : int
+            Current simulation step count.
+        agents : dict[str, Agent]
+            Dictionary of agent instances keyed by their unique names.
+        seed : int or None
+            Random seed used for reproducibility. If None, each run will generate a new seed.
+        
+        Notes
+        -----
+        - Agents are automatically loaded from the XML file during initialization.
+        - Plugins are attached to pre-step or post-step execution hooks. Each plugin is preset to be attached accordingly.
         """
         self.step_count = 0
         self.time = 0

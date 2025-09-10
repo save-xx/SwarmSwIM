@@ -16,7 +16,6 @@ dependencies = [
   "matplotlib",
   "fastapi",
   "uvicorn",
-  "opencv-python",
   "pyqtgraph>=0.13",
   "PyQt5",
   "openpyxl",

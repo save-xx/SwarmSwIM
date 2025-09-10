@@ -13,7 +13,45 @@ logger = logging.getLogger(__name__)
 
 
 def save_bag(simulation, name = "swsw"):
-    """Activate the data saving"""
+    """
+    Activate automatic simulation data recording (bagging) to a SQLite database.
+
+    This function sets up a DataBagger plugin that collects the state of all agents,
+    sensor readings, and plugin outputs at every simulation timestep. Data is written 
+    to a local SQLite database file, which can optionally be converted to Excel (.xlsx) 
+    for easier analysis.
+
+    The bagging plugin will automatically:
+
+    1. Record agent states:
+       - Positions (x, y, z)
+       - Orientation (psi)
+       - Measured depth, heading, and position
+       - Control modes (depth, heading, planar)
+       - Commanded actions (e.g., cmd_depth, cmd_planar, cmd_forces)
+    2. Record plugin outputs if the plugin implements a `_bag()` method that returns
+       a list of dictionaries.
+    3. Save all data in separate tables per agent and plugin.
+    4. Handle clean shutdown on Ctrl+C, ensuring the database is closed properly.
+    5. Optionally convert the SQLite database to Excel for analysis using `sqlite_to_excel()`.
+
+    Parameters
+    ----------
+    simulation : object
+        The simulation instance containing agents, plugins, and the timestep logic.
+    name : str, optional
+        Base filename for the saved database (default is "swsw"). The final database
+        will include a timestamp in the filename.
+
+    Notes
+    -----
+    - The plugin attaches to the simulation as `simulation.save_plugin`.
+        It will be executed automatically once atteched.
+    - Recording starts immediately after activation.
+    - The recorded database can be accessed directly with SQLite tools, or converted
+      to Excel for further analysis.
+    - Each timestep appends data; no overwriting occurs unless the filename already exists.
+    """
     simulation.save_plugin = DataBagger(simulation, name)
 
 
@@ -114,8 +152,30 @@ class DataBagger:
         except Exception as e:
             logger.warning(f"Could not conver bag to xlsx: {e}")
 
-# Additional ultility, convert to csv
+# ===================================
+# Additional utility, convert to csv
+# ===================================
 def sqlite_to_excel(name):
+    """
+    Convert a SQLite database containing simulation data to an Excel (.xlsx) file.
+
+    This utility reads all tables from a SQLite database (created by `DataBagger`) 
+    and writes each table into a separate sheet in an Excel workbook. Column headers 
+    and data types are preserved as much as possible.
+
+    Parameters
+    ----------
+    name : str
+        Base filename of the SQLite database (without extension). The function expects
+        a file named `{name}.db` and will create `{name}.xlsx` in the same directory.
+
+    Notes
+    -----
+    - If the database file does not exist, a warning is logged and no Excel file is created.
+    - Each table in the SQLite database becomes a separate sheet in the Excel workbook.
+    - This function uses `pandas` and `openpyxl` for reading/writing data.
+    - Existing Excel files with the same name will be overwritten without prompt.
+    """
     sqlite_file = name + ".db"
     excel_file = name + ".xlsx"
     

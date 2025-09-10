@@ -10,7 +10,24 @@ from SwarmSwIM.utility._current_functions import calculate_global_waves, calcula
 
 
 def activate_Currents (simulation):
-    """Activate current plugin to simulation."""
+    """
+    Activate the ocean current plugin for a simulation.
+
+    This function adds a current field to the simulation, allowing agents 
+    to experience environmental flow effects (e.g., water currents). 
+    The plugin is automatically called before each simulation step.
+
+    Parameters
+    ----------
+    simulation : object
+        The simulation instance to which the current plugin will be added.
+
+    Notes
+    -----
+    - The current plugin instance is stored as `simulation.currents`.
+    - It is registered to `simulation.plugins_calls_prestep`, so it will be
+      executed automatically before each simulation step.
+    """
     current_inst = Currents(simulation)
     setattr(simulation, 'currents', current_inst)
     simulation.plugins_calls_prestep["currents"] = simulation.currents

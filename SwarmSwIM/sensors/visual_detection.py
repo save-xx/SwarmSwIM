@@ -10,7 +10,29 @@ EXPECTED_TAGS = ["period", "field_of_view", "visibility_model"]
 
 
 def activate_Detector(simulation, detector_name: str = "detector"):
-    """Activate detection plugin to simulation."""
+    """
+    Activate a detection plugin for a simulation.
+
+    This function sets up a detector plugin that can be used by agents
+    to detect other agents, identity and relative position in the simulation environment. 
+    The plugin is automatically called after each simulation step.
+
+    Parameters
+    ----------
+    simulation : object
+        The simulation instance to which the detector plugin will be added.
+    detector_name : str, optional
+        Unique name for the detector plugin. This name is used as a key in
+        the simulation's post-step plugin dictionary. This must correspond 
+        to the tag in the agent/sensors XML. Default is "detector".
+
+    Notes
+    -----
+    - The plugin is automatically registered to the simulation's post-step 
+      operations, so no manual updating is required.
+    - Multiple detectors can be activated simultaneously by providing unique names.
+    - Output is logged into the bag in a `detector_name` page 
+    """
     detector_inst = Detection(simulation, detector_name)
     simulation.plugins_calls_poststep[detector_name] = detector_inst
 
@@ -76,6 +98,7 @@ class Detection:
         # parse values
         self.parse_detector(agent, detector_root)
 
+
     def parse_detector(self, agent, detector_root):
         """Parse a detector sensor description from an agent and populate the class."""
         detector = agent.detectors[self.detector_name]
@@ -95,11 +118,13 @@ class Detection:
         # save changes
         agent.detectors[self.detector_name] = detector
 
+
     def emulate_error (self, data, error):
         ''' Alter the input data to simulate measurment errors '''
         data += error[0]
         data += self.rnd.normal(scale=error[1])
         return data
+
 
     def __call__(self):
         """Execute detector logic for eact step."""
@@ -123,6 +148,7 @@ class Detection:
         # return a list with the names of the agents that have received an update
         self.bag = dict_of_updates
         return dict_of_updates
+
 
     def update_detections(self, agent, detector):
         ''' updates relative positions of each agent '''

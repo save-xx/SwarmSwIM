@@ -172,3 +172,4 @@ SwarmSwIM.egg-info
 # ignore __pychache subfolders
 SwarmSwIM/__pycache__
 SwarmSwIM/sensors/__pycache__
+SwarmSwIM/utility/__pycache__

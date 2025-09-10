@@ -48,12 +48,45 @@ def activate_Acoustic(simulation,
                       acoustic_name="acoustic", 
                       agent_selection: list[str] | None = None
                       ):
-    """Activate acoustic channel plugin to simulation."""
+    """
+    Activate an acoustic communication channel plugin for a simulation.
+
+    This function sets up an acoustic channel that agents in the simulation 
+    can use to send and receive messages. The plugin is automatically called 
+    after each simulation step.
+
+    Parameters
+    ----------
+    simulation : object
+        The simulation instance to which the acoustic channel will be added.
+    acoustic_name : str, optional
+        Unique name for the acoustic channel. This is used as a key in the
+        simulation's post-step plugin dictionary. This also must correspond to the tag description 
+        present in the simulation XML. Default is "acoustic".
+    agent_selection : list of str, optional
+        A list of agent names that will participate in this acoustic channel.
+        If None, all agents in the simulation are considered.
+
+    Returns
+    -------
+    AcousticChannel
+        The initialized acoustic channel instance, which can be used as an handle to
+        send messages on this channel.
+
+    Notes
+    -----
+    - If the simulation does not already have a memory buffer for messages, 
+      this function will initialize it.
+    - The channel is automatically registered to the simulation's post-step 
+      operations, so no manual updating is required.
+    - Output is logged into the bag in an `acoustic_name` page 
+    """
+    # Create the acoustic channel instance
     acoustic_inst = AcousticChannel(simulation, acoustic_name, agent_selection)
-    # Initiate required short memory if not already active
+    # Ensure simulation memory is active
     if not simulation.has_memory:
         simulation.enable_memory()
-    # Add to post-step operations
+    # Register the plugin to be executed after each simulation step
     simulation.plugins_calls_poststep[acoustic_name] = acoustic_inst
     # return handler to sent messages on this channel
     return acoustic_inst
@@ -80,7 +113,6 @@ class AcousticChannel:
 
         # collection of active messages
         self.active_msgs = {}
-
         # create random seed
         self.rnd = simulation.rnd.spawn(1)[0]
         # find and unpack parameters from simulation xml

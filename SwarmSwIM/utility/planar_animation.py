@@ -34,7 +34,54 @@ class Visualizer2D:
             properties: dict | None = None
             ) -> None:
         """
+        Initialize a 2D real-time visualization of a simulation.
 
+        The Visualizer2D class provides a live 2D view of agents in a simulation.
+        It displays agents as oriented triangles, plots their trajectories, and 
+        supports background images, shapes, legends, and optional video recording.
+
+        The visualization updates at each simulation tick by calling the 
+        provided `tick_function`, which should advance the simulation state.
+
+        Parameters
+        ----------
+        simulation : object
+            The simulation instance containing agents and their states. .
+        tick_function : callable
+            Function that is called at each animation step to advance the simulation.
+            This is typically `simulation.step()` or a custom wrapper.
+        properties : dict, optional
+            Optional dictionary to customize visualization properties. Supported keys:
+            
+            - "title" : str
+                Window title (default: "2D Simulator")
+            - "record" : bool
+                Whether to record frames for saving a video (default: False)
+            - "window_size" : tuple[int,int]
+                Width and height of the visualization window in pixels (default: (800,608))
+            - "outfile" : str
+                Output video filename if recording is enabled (default: "simulation.mp4")
+            - "bg_color" : str
+                Background color (default: "k" for black)
+            - "bg_image" : dict
+                Dictionary specifying background image:
+                {"path": "image.png", "scale": 1.0}
+            - "bg_shapes" : list
+                List of QGraphicsItem shapes to draw behind agents
+            - "grid" : bool
+                Display a background grid (default: True)
+            - "color_by_type" : bool
+                Assign colors to agents based on their type (default: False)
+
+        Notes
+        -----
+        - If the simulation does not already have a memory buffer for messages, 
+        this method will initialize it.
+        - Each agent is visualized as an oriented triangle and its trajectory is plotted.
+        - Legend entries are automatically created for each agent or agent type.
+        - If `record=True`, frames are stored in memory and are saved in video format.
+        - The visualizer uses PyQtGraph and runs a Qt application.
+        - Resizing is supported unless `record=True` (window is fixed size during recording).
         """
         self._log_throttler = time.perf_counter()
         self.tick_function = tick_function
