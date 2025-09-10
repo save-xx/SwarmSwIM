@@ -37,11 +37,9 @@ class Visualizer2D:
 
         """
         self._log_throttler = time.perf_counter()
-
         self.tick_function = tick_function
         self.fps = 1 / simulation.Dt
         self.sim = simulation
-
 
         self._last_update = None
         # Default properties
@@ -60,6 +58,10 @@ class Visualizer2D:
 
         # Recording buffer
         self.frames = []
+
+        # Initiate required short memory if not already active
+        if not simulation.has_memory:
+            simulation.enable_memory()
 
         # Qt app
         self.app = QtWidgets.QApplication(sys.argv)

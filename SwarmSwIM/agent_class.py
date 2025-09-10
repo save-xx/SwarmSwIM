@@ -30,8 +30,10 @@ class Agent():
         self._cmd_force = np.array([0.0, 0.0])
         self._cmd_local_vel = np.array([0.0, 0.0])
         self._cmd_planar = np.array([0.0, 0.0])
+        
         # Fixed time division
         self.Dt = 0.1 # < placeholder overwritten by simulator
+        
         # Set inital condition
         self.name = name
 
@@ -41,8 +43,15 @@ class Agent():
         # Convert to float numpy array
         self.pos = np.array(initialPosition, dtype=float)
 
+        # incurrent (current reference frame) velocity initialization
+        self.incurrent_velocity = np.array([0, 0], dtype=float)
+
         # Set initial heading
         self.psi = initialHeading
+
+        # set initial Yawrate
+        self.yawrate = 0.0
+
         # Genrate random seed based on name
         if not rng:
             self.rnd = np.random.default_rng()
@@ -53,12 +62,12 @@ class Agent():
         self.agent_type = agent_xml
         self._agent_filepath = sim_functions.get_xml_path(agent_xml)
         self._parse_agent_parameters()
-        # Parameter initialization
-        self.incurrent_velocity = np.array([0, 0])
+        
         # Sensors initialization
         self.measured_depth = initialPosition[2]
         self.measured_heading = initialHeading
         self.measured_pos = initialPosition[0:2]
+        
         # Command initialization
         self.cmd_depth = initialPosition[2]
         self.cmd_heave = 0
@@ -96,10 +105,10 @@ class Agent():
         return self._cmd_planar
 
     @cmd_planar.setter
-    def _cmd_planar(self, input):
+    def cmd_planar(self, input):
         if len(input) != 2:
             raise ValueError(f"cmd_planar input must be of length 2: passed {input}")
-        self._cmd_local_vel = np.array(input, dtype=float)
+        self._cmd_planar = np.array(input, dtype=float)
 
     # ================================
 
@@ -142,7 +151,8 @@ class Agent():
             self.added_mass = parse_matrix(sim_agent.find('added_mass'))
         else:
             self.added_mass = np.zeros([2, 2])
-        self.tot_mass = self.added_mass + np.array([[self.mass, 0], [0, self.mass]])
+        self.massMatrix = self.added_mass + np.array([[self.mass, 0], [0, self.mass]])
+        self.inverseMass = np.linalg.inv(self.massMatrix)
 
         # selection of control scheme [REQUIRED]
         self.depth_control = sim_agent.find('depth_control').text
@@ -250,13 +260,16 @@ class Agent():
 
         if "ideal" == self.heading_control:
             self.psi += correction
+            self.yawrate = 0.0
 
         elif "step" == self.heading_control:
-            step = (self.Dt*self.step_heading)
+            step = (self.Dt * self.step_heading)
             if abs(correction) < step:
                 self.psi += correction
+                self.yawrate = correction / self.Dt
             else:
                 self.psi += step * np.sign(correction)
+                self.yawrate = self.step_heading * np.sign(correction)
 
         elif "proportional" == self.heading_control:
             r = self.proportional_heading * correction
@@ -264,10 +277,12 @@ class Agent():
                 r = self.yawrate_limit
             if r < -self.yawrate_limit:
                 r = -self.yawrate_limit
-            self.psi += self.emulate_error(r, self.e_yawrate)*self.Dt
+            self.yawrate = self.emulate_error(r, self.e_yawrate)
+            self.psi += self.yawrate * self.Dt
 
         elif "yawrate" == self.heading_control:
-            self.psi += self.emulate_error(self.cmd_yawrate, self.e_yawrate) * self.Dt
+            self.yawrate = self.emulate_error(self.cmd_yawrate, self.e_yawrate)
+            self.psi += self.yawrate * self.Dt
         # return result in the [0,360) range
         self.psi %= 360
 
@@ -286,7 +301,8 @@ class Agent():
         y_correction = self.cmd_planar[1]-self.measured_pos[1]
         sinpsi = np.sin(np.deg2rad(self.psi))
         cospsi = np.cos(np.deg2rad(self.psi))
-        R_mat = np.array(((cospsi,sinpsi),(sinpsi,-cospsi)))
+        R_mat = np.array([[cospsi,  sinpsi],
+                         [sinpsi, -cospsi]])
 
         if "ideal" == self.planar_control:
             self.pos[0] += x_correction
@@ -326,26 +342,50 @@ class Agent():
             self.pos[1] += (real_translation[0] * sinpsi - real_translation[1] * cospsi)
 
         elif "local_forces" == self.planar_control:
-            # NED convention
-            # TODO Add effective Forces and e_forces
-            real_actuation = [self.emulate_error(self.cmd_forces[0], self.e_local_force),
-                              self.emulate_error(-self.cmd_forces[1], self.e_local_force)]
-            external_forces = np.array([real_actuation[0]+self.other_forces[0],
-                                        -real_actuation[1]-self.other_forces[1]])
-            F_tot = (external_forces +
-                     np.matmul(self.linear_damping, self.incurrent_velocity) +
-                     np.matmul(self.quadratic_damping, abs(self.incurrent_velocity)*self.incurrent_velocity)
-                     )
-            acc_local = np.matmul(np.linalg.inv(self.tot_mass), F_tot)
-            self.incurrent_velocity = self.incurrent_velocity + acc_local * Dt
-            Dx = (self.incurrent_velocity[0] * cospsi + self.incurrent_velocity[1] * sinpsi) * Dt
-            Dy = (self.incurrent_velocity[0] * sinpsi - self.incurrent_velocity[1] * cospsi) * Dt
-            self.pos[0] += Dx
-            self.pos[1] += Dy
+            self._force_dynamics(R_mat)
 
         # Save last step state
         self.last_step_pos = self.pos.copy()
 
+    def _force_dynamics(self, R_mat):
+        """
+        Solve planarf motion for the local_forces case.
+        Use Semi-Implicit Euler integration
+        """
+        # Use Fossen notation, NED-body reference frame.
+        vel_body = self.incurrent_velocity
+        u, v = vel_body
+        r = np.deg2rad(self.yawrate)    
+        M = self.massMatrix
+        M_inv = self.inverseMass
+
+        # Total force vector NED-body reference frame.
+        thrusters = np.array([
+            self.emulate_error(self.cmd_forces[0], self.e_local_force),
+            self.emulate_error(-self.cmd_forces[1], self.e_local_force)
+            ])
+        
+        damping_force = (
+            self.linear_damping @ vel_body +
+            self.quadratic_damping @ (vel_body * np.abs(vel_body))
+        )
+
+        force_total = thrusters + self.other_forces + damping_force
+
+        # Coriolis/centripetal vector
+        Coriolis = np.array([
+            -r * (M[0,1] * u + M[1,1] * v),
+             r * (M[0,0] * u + M[0,1] * v)
+            ])
+        
+        # Accelerations in body frame (u_dot, v_dot)
+        acc_vector = M_inv @ (force_total - Coriolis)
+        self.incurrent_velocity += acc_vector * self.Dt
+        
+        # Pose update (semi-implicit Euler)
+        velocity_ned = R_mat @ self.incurrent_velocity
+        self.pos[:2] += velocity_ned * self.Dt
+        
 
     # =========================
     # Built-in command packages 

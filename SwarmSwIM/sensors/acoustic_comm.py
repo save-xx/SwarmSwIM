@@ -44,9 +44,12 @@ class AgentChannel:
     sync_gap: float = 0.0
 
 
-def activate_Acoustic(simulation, acoustic_name="acoustic"):
+def activate_Acoustic(simulation, 
+                      acoustic_name="acoustic", 
+                      agent_selection: list[str] | None = None
+                      ):
     """Activate acoustic channel plugin to simulation."""
-    acoustic_inst = AcousticChannel(simulation, acoustic_name)
+    acoustic_inst = AcousticChannel(simulation, acoustic_name, agent_selection)
     # Initiate required short memory if not already active
     if not simulation.has_memory:
         simulation.enable_memory()
@@ -61,7 +64,7 @@ class AcousticChannel:
         self, 
         simulation, 
         channel_name = "acoustic",
-        agent_selection: list | None = None,
+        agent_selection: list[str] | None = None,
         c_sound = SPEED_OF_SOUND, 
         max_range = MAX_RANGE
         ):

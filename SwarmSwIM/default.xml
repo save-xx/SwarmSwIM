@@ -47,7 +47,7 @@
         <vel_limit>1.0 0.5</vel_limit>
 
         <!-- Sensors Sensibility: [bias, random standard deviation] -->
-        <e_depth>0.0 0.1</e_depth> <!-- m -->
+        <e_depth>0.0 0.0</e_depth> <!-- m -->
         <e_heave>0.0 0.0</e_heave> <!-- m/s -->
         <e_heading>0.0 0.0</e_heading> <!-- deg -->
         <e_yawrate>0.0 0.0</e_yawrate> <!-- deg/s -->
@@ -99,6 +99,7 @@
 
         </Acoustic_Ranging>
 
+    <bathimetry/>
 
     </sensors>
 
