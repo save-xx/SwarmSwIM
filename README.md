@@ -21,8 +21,9 @@ This is a Python3-based simulator designed for modeling multi-robot and swarm sy
 - **Basic Visualizations**: Includes simple tools for visualizing agent positions and swarm dynamics.
 
 <p align="center">
-<video src="readme_pics/demo.mp4" autoplay loop muted width="500"></video>
+<video src="https://github.com/user-attachments/assets/1fb1e474-fba9-489f-88ae-7a79dd36136a" autoplay loop muted width="600"></video>
 </p>
+
 <figure>
 <p align="center">
   <img src="readme_pics/animation_example.png" alt="Animation Example" width="400">
