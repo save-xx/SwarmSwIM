@@ -1,7 +1,7 @@
 # SwarmSwIM: an Underwater Swarm Simulator 
 
 <p align="center">
-  <img src="site/images/swsw_logo.jpg" alt="logo" width="200">
+  <img src="readme_pics/swsw_logo.jpg" alt="logo" width="200">
 </p>
 
 This is a Python3-based simulator designed for modeling multi-robot and swarm systems. It implements a simplified motion model, with an assumed level of low level control ("backseat") already baked in the simulated agents rather than calculating the full-body dynamics. This approach allows the simulator to efficiently handle a large number of agents simultaneously.
@@ -21,11 +21,11 @@ This is a Python3-based simulator designed for modeling multi-robot and swarm sy
 - **Basic Visualizations**: Includes simple tools for visualizing agent positions and swarm dynamics.
 
 <p align="center">
-<video src="site/SwarmSwIM.wiki/videos/demo.mp4" autoplay loop muted width="500"></video>
+<video src="readme_pics/demo.mp4" autoplay loop muted width="500"></video>
 </p>
 <figure>
 <p align="center">
-  <img src="site/SwarmSwIM.wiki/images/animation_example.png" alt="Animation Example" width="400">
+  <img src="readme_pics/animation_example.png" alt="Animation Example" width="400">
 </p>
   <figcaption align="center">SwarmSwIM visual 2D representation</figcaption>
 </figure>
