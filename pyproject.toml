@@ -13,9 +13,8 @@ authors = [
 requires-python = ">=3.8"
 dependencies = [
   "numpy",
-  "matplotlib",
-  "fastapi",
-  "uvicorn",
+  "scipy",
+  "pandas",
   "pyqtgraph>=0.13",
   "PyQt5",
   "openpyxl",

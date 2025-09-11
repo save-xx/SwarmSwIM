@@ -1,22 +1,31 @@
+# Example file of a SwarmSwIM simulator
+
 from SwarmSwIM import Simulator
 from SwarmSwIM import activate_Detector, activate_Acoustic
 from SwarmSwIM import activate_Currents, activate_MapSensor
 from SwarmSwIM import save_bag
 from SwarmSwIM import Visualizer2D
 
+PERIOD = 0.05 
+
 # Start a Simulator instance with a 0.05 s period
-S = Simulator(0.05)
+S = Simulator(PERIOD)
 # save data in a bag
 save_bag(S)
 
 # Activate current effects
 activate_Currents(S)
+
 # Activate visual detectoer
 activate_Detector(S)
-# Activate Map Sensor
-activate_MapSensor(S, "bathimetry", "sample.png", scale=0.1)
+
 # Activate acoustic channel (return handle to send messagse)
 ac_handle = activate_Acoustic(S)
+
+# Activate Map Sensor
+# NOTE: the map_filename (path to image) is required.
+# activate_MapSensor(S, "bathimetry", "sample.png", scale=0.1)
+
 
 
 # define cycle function
@@ -27,7 +36,7 @@ def cycle():
     print(events)
 
     # ========================
-    # some user devined events
+    # some user defined events
     # ========================   
     # do every 60 steps
     if S.step_count % 60 == 0:
@@ -58,10 +67,6 @@ properties = {
     "grid": True, # add grid visualization
     "color_by_type": False, # set legend - False for individual names True for naming by type
     "record": False, # creade video recording
-    "bg_image": {
-        "path":"sample.png",
-        "scale": 0.1
-    }
     }
 
 # create visualizer

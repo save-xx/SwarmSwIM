@@ -44,7 +44,8 @@ class Simulator():
         Notes
         -----
         - Agents are automatically loaded from the XML file during initialization.
-        - Plugins are attached to pre-step or post-step execution hooks. Each plugin is preset to be attached accordingly.
+        - Plugins are attached to pre-step or post-step execution hooks. 
+        Each plugin is preset to be attached accordingly.
         """
         self.step_count = 0
         self.time = 0

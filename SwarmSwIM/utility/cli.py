@@ -9,7 +9,7 @@ def copy_templates(destination: str):
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
 
-    files = ["simulation.xml", "default.xml"]
+    files = ["simulation.xml", "default.xml", "example.py"]
 
     # Use resources.files() to access package data
     package = "SwarmSwIM"

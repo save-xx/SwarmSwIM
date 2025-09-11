@@ -5,7 +5,6 @@ import numpy as np
 import xml.etree.ElementTree as ET
 import os
 import logging
-import inspect
 
 
 DIR_FILE = os.path.dirname(__file__)
