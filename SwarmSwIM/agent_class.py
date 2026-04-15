@@ -144,7 +144,8 @@ class Agent():
         if sim_agent.find('dimentions') is not None:
             self.dimentions = parse_matrix(sim_agent.find('dimentions'))
         else:
-            self.dimentions = np.array([0.4, 0.2, 0.3])
+            self.dimentions = np.array([0.4, 0.2, 0.3]) #(andrea)
+            #self.dimentions = np.array([1.0, 5.0, 6.0])
 
         if sim_agent.find('added_mass') is not None:
             self.added_mass = parse_matrix(sim_agent.find('added_mass'))

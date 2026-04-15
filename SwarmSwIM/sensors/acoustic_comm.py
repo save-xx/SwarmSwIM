@@ -12,7 +12,6 @@ from SwarmSwIM.sim_functions import parse_matrix, xml_to_float
 # generate unique ids for each msg
 global_msg_id = itertools.count()
 # Default values (if not specified)
-SPEED_OF_SOUND = 1500. # m/s
 MAX_RANGE = 2000. # m
 
 
@@ -44,7 +43,7 @@ class AgentChannel:
     sync_gap: float = 0.0
 
 
-def activate_Acoustic(simulation, 
+def activate_Acoustic(simulation,c,pdr,  #(andrea)
                       acoustic_name="acoustic", 
                       agent_selection: list[str] | None = None
                       ):
@@ -82,7 +81,7 @@ def activate_Acoustic(simulation,
     - Output is logged into the bag in an `acoustic_name` page 
     """
     # Create the acoustic channel instance
-    acoustic_inst = AcousticChannel(simulation, acoustic_name, agent_selection)
+    acoustic_inst = AcousticChannel(simulation, c, pdr, acoustic_name, agent_selection)
     # Ensure simulation memory is active
     if not simulation.has_memory:
         simulation.enable_memory()
@@ -95,10 +94,9 @@ def activate_Acoustic(simulation,
 class AcousticChannel:
     def __init__(
         self, 
-        simulation, 
+        simulation, c_sound, PDR,
         channel_name = "acoustic",
         agent_selection: list[str] | None = None,
-        c_sound = SPEED_OF_SOUND, 
         max_range = MAX_RANGE
         ):
         # private parameters to bag
@@ -110,6 +108,9 @@ class AcousticChannel:
         self.C_SOUND = c_sound
         self.MAX_RANGE = max_range
         self.channel_name = channel_name
+
+        # packet dlivery ratio
+        self.PDR = PDR
 
         # collection of active messages
         self.active_msgs = {}
@@ -177,7 +178,7 @@ class AcousticChannel:
         max_update = xml_to_float(root.find("max_range"), default=self.MAX_RANGE)
         self.MAX_RANGE = max_update if max_update  > 0 else self.MAX_RANGE
         # load noise values range
-        self.e_range = parse_matrix(root.find('e_acoustic_range'))
+        self.e_range = parse_matrix(root.find('e_range'))
         if self.e_range.size == 0:
             self.e_range = np.zeros(2)
         # load noise values doppler
@@ -194,7 +195,6 @@ class AcousticChannel:
         self._PPM  = xml_to_float(root.find("drift"))
         # load syncronization gap between agent
         self._sync_gap = xml_to_float(root.find("sync_gap"))
-
     
     def populate_acoustic_channel(self, channel_name: str, agent):
         """populate each agent channel"""
@@ -354,44 +354,68 @@ class AcousticChannel:
             incoming.ToD_exact = msg["tod_exact"]
             incoming.intact = True
             incoming.pos_at_detection = copy.deepcopy(agent.pos)
+
+            # --- ADD NATURAL PACKET LOSS HERE --- (andrea)
+            if self.rnd.random() > self.PDR:     # PDR in [0,1]
+                incoming.intact = False
+                incoming.payload = None
         else:  
             # Collision → invalidate message
             incoming.sender = None
             incoming.payload = None
             incoming.intact = False
 
-    def _return_msg_to_agent(self, agent, msg):
-        """ """
+    def _return_msg_to_agent(self, agent, msg):#(andrea)
         channel = agent.acoustic_channels[self.channel_name]
         incoming = channel.incoming
         sender = self.sim.agents[msg['sender']]
-        # Release Channel
+
         channel.status = True
-        # positions at instant of front wave emission and reception
+
         sender_position = msg['start_loc']
-        receiver_position = incoming.pos_at_detection  # with assumption of C_SOUND >> agent velocity
-        # distance measurament  |  front wave instance 
+        receiver_position = incoming.pos_at_detection
         exact_distance = np.linalg.norm(sender_position - receiver_position)
-        # distance at arrival
         incoming.perfect_range = exact_distance
-        # continue calculation if the message is intact
-        if not incoming.intact:
-            return
-        # Calculate ToA
-        incoming.ToA_raw, incoming.ToA_exact = self.get_TimeOfArrival(channel, exact_distance, msg['end_radius'])
-        # adding ranging noise (TwoWayTimeTravel-like measurament)
-        incoming.ping_range = self.emulate_error(exact_distance, self.e_range)
-        # get position at the endwave instance for doppler
-        sender_endwave_position = self.sim.memory.recall_position(msg['endtime'], sender.name)
-        receiver_endwave_position = agent.pos
-        # calculate doppler value calculated: t0 time at front wave, t1 time at endwave
-        #              t1 .     .      (p_r - p_s)                  ||p_r(t1) - p_s(t1)|| - ||p_r(t0) - p_s(t0)||
-        # doppler =   ∫ (p_r - p_s) x ------------- dt  / (t1-t0)  = -----------------------------------------
-        #              t0             ||p_r - p_s||                                   (t1 -t0)
-        end_dist = np.linalg.norm(receiver_endwave_position - sender_endwave_position)
-        doppler  = (end_dist - exact_distance) / msg["duration"]
-        incoming.doppler_velocity = self.emulate_error(doppler, self.e_doppler)
-        return incoming
+
+        if incoming.intact:
+            incoming.ToA_raw, incoming.ToA_exact = self.get_TimeOfArrival(
+                channel, exact_distance, msg['end_radius']
+            )
+            incoming.ping_range = self.emulate_error(exact_distance, self.e_range)
+            #(andrea)
+            '''
+            OLD IMPLEMENTATION:
+            sender_endwave_position = self.sim.memory.recall_position(msg['endtime'], sender.name)
+            receiver_endwave_position = agent.pos
+            end_dist = np.linalg.norm(receiver_endwave_position - sender_endwave_position)
+            doppler = (end_dist - exact_distance) / msg["duration"]
+
+            NEW IMPLEMENTATION: 
+            We keep the same Doppler model,
+            but compute it at reception time instead of transmission time.
+            This makes the result more consistent with the actual acoustic interaction, 
+            and improves numerical stability.'''
+            #    times aligned with reception (proposal)
+            t1 = incoming.ToA_exact
+            t0 = t1 - msg["duration"]
+
+            # positions at those times
+            sender_t0 = self.sim.memory.recall_position(t0, sender.name)
+            sender_t1 = self.sim.memory.recall_position(t1, sender.name)
+
+            receiver_t0 = self.sim.memory.recall_position(t0, agent.name)
+            receiver_t1 = agent.pos   # current ≈ t1
+
+            # distances
+            d0 = np.linalg.norm(receiver_t0 - sender_t0)
+            d1 = np.linalg.norm(receiver_t1 - sender_t1)
+
+            # same finite-difference model
+            doppler = (d1 - d0) / msg["duration"]
+
+            incoming.doppler_velocity = self.emulate_error(doppler, channel.e_doppler)
+
+        return copy.deepcopy(incoming)
 
     def get_TimeOfArrival(self, channel, distance, radius):
         """ """

@@ -1,0 +1,11 @@
+numpy
+scipy
+pandas
+matplotlib
+opencv-python
+fastapi
+uvicorn
+imageio
+pyqtgraph
+PyQt5
+openpyxl

@@ -6,7 +6,7 @@ import copy
 
 
 logger = logging.getLogger(__name__)
-DEFAULT_LENGTH = 10
+DEFAULT_LENGTH = 800
 
 
 
@@ -16,17 +16,19 @@ class HistoryShortMemory:
         # load length
         self.set_history_length()
         self.initiate_agents()
+        print('self.HISTORY_LENGTH',self.HISTORY_LENGTH)
 
 
     def initiate_agents(self) -> None:
         """Initate assocuiated attribute for each agent."""
         # Initiate shared time axis memory
         n = self.HISTORY_LENGTH
-        self.time_axis= deque(
+        self.time_axis= deque( #(andrea)
                 [
                     self.sim.time - k * self.sim.Dt for k in reversed(range(n))
                 ], maxlen=n
             )
+        #self.time_axis = deque([self.sim.time], maxlen=n)
         # for each agent initiate individuel deque memory
         for _, agent in self.sim.agents.items():
             new_deque = deque([agent.pos.copy() for _ in range(n)], maxlen=n)
@@ -38,8 +40,12 @@ class HistoryShortMemory:
         try:
             tree = ET.parse(self.sim._simulation_filepath)
             root = tree.getroot()
-            length_text = root.find("history_length")
-            self.HISTORY_LENGTH = int(length_text.text)
+            node = root.find("history_length")
+            if node is not None:#(andrea)
+                self.HISTORY_LENGTH = int(node.text)
+            else:
+                self.HISTORY_LENGTH = DEFAULT_LENGTH
+            
 
         except Exception as e:
             self.HISTORY_LENGTH = DEFAULT_LENGTH
@@ -47,6 +53,7 @@ class HistoryShortMemory:
                 f"Could not read/convert history_length, revert to default: {DEFAULT_LENGTH}"
             )
             logger.debug(f"Exception: {e}")
+        
 
 
     def __call__(self):
@@ -78,9 +85,11 @@ class HistoryShortMemory:
                 f"returning result at last recorded time {self.time_axis[-1]}"
             )
             return agent.memory[-1]
-
+        #print('self.time_axis',self.time_axis)
+        #print('t_req',t_req)
+        #print('self.time_axis[0]',self.time_axis[0])
         # check if requesting time is older than short memory
-        if t_req < self.time_axis[0]:
+        if t_req < self.time_axis[0] :#+ self.sim.Dt: #(andrea)
             logger.warning(
                 f"History memory too short to remember positions at time {t_req}, "
                 f"returning result at earliest recorded time {self.time_axis[0]}"

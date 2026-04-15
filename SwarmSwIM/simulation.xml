@@ -8,7 +8,7 @@
 
     <!-- number of elements keept in the short term memory -->
     <history_length>
-        50 
+        800 
     </history_length>
 
     <!-- Describe start-up agents and add them to the simulation -->
@@ -21,8 +21,10 @@
             <state>
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->
-                0.0  0.0  1.0  0.0
-                3.0  0.0  1.0  180.0
+                -100  0.0  69.0  180.0
+                +100  0.0  69.0  0.0
+                +50   -50  69.0  90.0
+                +50   +50  69.0  270.0
                 <!-- Add more lines to add agents -->
             </state>
         </agent_type>
@@ -106,13 +108,13 @@
             -->
             <wave1>
                 <!-- Peak intensity of current disturbance in m/s -->
-                <amplitude> 0.6 </amplitude> 
+                <amplitude> 0.6 </amplitude> <!-- 0.6, 2.0, 1.0 -->
                 <!-- Wavelength in m -->
                 <wavelength> 2.0 </wavelength>
                 <!-- Wave advancement velocity in m/s -->
                 <wavespeed> 1.0 </wavespeed>
                 <!-- Direction of advancement of waves and direction of current contribution [degree] -->
-                <direction> 90.0 </direction>
+                <direction> 0.0 </direction>
                 <!-- Time shift of wave [0,2pi] -->
                 <shift> 0.0 </shift>
             </wave1>
@@ -140,9 +142,9 @@
 
         <!-- Noises -->
         <!-- Two Way Time Travel error on range [m] [bias, SD] -->
-        <e_acoustic_range>0.2 0.2</e_acoustic_range>
+        <e_range>0.0 0.5</e_range>
         <!-- Acoustic Doppler based relative velocity measure error [m/s] [bias, SD] -->
-        <e_doppler>0.1 0.2</e_doppler>
+        <e_doppler>0.0 0.0</e_doppler>
         <!-- computation common delay, betveen ToD collection and actual ToD [s]-->
         <!-- this amount is flat and equal among all acoustic transcievers -->
         <delay_acoustic_send>93000e-6</delay_acoustic_send>
