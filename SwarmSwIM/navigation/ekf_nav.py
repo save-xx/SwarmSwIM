@@ -43,17 +43,6 @@ class EKFNavFilter(BaseNavFilter):
     - x, y, z are NED position
     - psi is heading [deg]
     - u, v are body-frame planar velocities
-
-    Notes
-    -----
-    - Dead reckoning is velocity-driven:
-          x_{k+1}, y_{k+1} are propagated from [u, v, psi]
-    - The shadow simulator is still used to propagate the nominal heading,
-      depth, and nominal body velocity consistently with the simulator model.
-    - The transition Jacobian is computed numerically.
-    - Local update uses depth + heading + body velocity.
-    - Cooperative ranging update is kept in the file but disabled for now.
-    - Velocity measurement noise is kept in the code but commented out.
     """
 
     def __init__(
@@ -62,8 +51,9 @@ class EKFNavFilter(BaseNavFilter):
         R_depth=0.25,
         R_heading_deg2=9.0,
         R_body_vel_diag=(0.05, 0.05),
-        R_range=100.0,
-        P0_diag=(4.0, 4.0, 1.0, 25.0, 0.25, 0.25),
+        R_range=50.0,
+        P0_diag=(10.0, 10.0, 2.0, 50.0, 1.0, 1.0),
+        alpha=1.0,
         max_packet_age=np.inf,
         age_inflation=0.0,
         min_range=1e-6,
@@ -79,7 +69,7 @@ class EKFNavFilter(BaseNavFilter):
         self.R_body_vel = np.diag(np.asarray(R_body_vel_diag, dtype=float))
         self.R_range = float(R_range)
         self.P0_diag = np.asarray(P0_diag, dtype=float)
-
+        self.alpha = float(alpha)
         self.max_packet_age = float(max_packet_age)
         self.age_inflation = float(age_inflation)
         self.min_range = float(min_range)
@@ -88,8 +78,11 @@ class EKFNavFilter(BaseNavFilter):
         self.keep_history = bool(keep_history)
 
         self.rng = np.random.default_rng(rng_seed)
-        self.innovation_log = []
-        self.nu = np.nan #debug
+
+        # third log: accepted/rejected EKF cooperative updates
+        self.coop_update_log = []
+
+        self.nu = np.nan
 
     # ==========================================================
     # Base hooks
@@ -235,13 +228,8 @@ class EKFNavFilter(BaseNavFilter):
 
             last_t_meas = st.last_coop_meas_time.get(sender_name, -np.inf)
             if t_meas <= last_t_meas:
-                print(
-                    f"SKIP REUSED MEAS | rx={receiver_name} tx={sender_name} "
-                    f"t_meas={t_meas:.3f} last={last_t_meas:.3f}"
-                )
-
                 continue
-            
+
             p_j = np.asarray(payload["pos"], dtype=float).reshape(-1)
             if p_j.size != 3:
                 continue
@@ -254,45 +242,21 @@ class EKFNavFilter(BaseNavFilter):
             t_rx = float(meas.get("t_rx", sim.time))
             packet_age = max(0.0, t_rx - t_tx)
 
-
             if packet_age > self.max_packet_age:
                 continue
 
             z = float(meas["range"])
 
-            print(
-                f"NEW COOP UPDATE | rx={receiver_name} tx={sender_name} "
-                f"t_meas={t_meas:.3f} last={last_t_meas:.3f}"
-            )
-
-            # --- DEBUG CONSISTENCY CHECK ---
-
-            t_tx_payload = float(payload.get("tx_time", np.nan))
-            t_tx_meas = float(meas.get("t_tx", np.nan))
-            t_meas = float(meas.get("t_meas", np.nan))
-            rng = float(meas.get("range", np.nan))
-            pos = payload.get("pos", [])
-
-            dt = t_tx_payload - t_tx_meas
-
-            print(
-                f"[COOP] rx={receiver_name} "
-                f"tx={sender_name} | "
-                f"tx_payload={t_tx_payload:8.3f} "
-                f"tx_meas={t_tx_meas:8.3f} "
-                f"Δtx={dt:+.6f} | "
-                f"t_meas={t_meas:8.3f} | "
-                f"range={rng:7.2f} | "
-                f"pos={np.round(pos, 3)}"
-            )
-
             self._update_cooperative_range(
                 receiver_name=receiver_name,
+                sender_name=sender_name,
                 p_j=p_j,
                 P_j=P_j,
                 z=z,
                 packet_age=packet_age,
-                t_now=sim.time
+                t_now=sim.time,
+                t_tx=t_tx,
+                t_meas=t_meas,
             )
 
             st.last_coop_meas_time[sender_name] = t_meas
@@ -304,32 +268,126 @@ class EKFNavFilter(BaseNavFilter):
     # Cooperative range update
     # ==========================================================
 
-    def _update_cooperative_range(self, receiver_name, p_j, P_j, z, packet_age, t_now):
-
-        
+    def _update_cooperative_range(
+        self,
+        receiver_name,
+        sender_name,
+        p_j,
+        P_j,
+        z,
+        packet_age,
+        t_now,
+        t_tx=np.nan,
+        t_meas=np.nan,
+    ):
         st = self.filters[receiver_name]
+
+        x_pre = st.x.copy()
+        P_pre = st.P.copy()
 
         p_i = st.x[:3].copy()
         diff = p_i - p_j
         r_hat = float(np.linalg.norm(diff))
 
-
         if r_hat < self.min_range:
+            self.coop_update_log.append({
+                "t": float(t_now),
+                "receiver": receiver_name,
+                "sender": sender_name,
+                "accepted": 0,
+                "reject_reason": "min_range",
+                "range": float(z),
+                "r_hat": float(np.nan),
+                "nu": float(np.nan),
+                "nis": float(np.nan),
+                "S": float(np.nan),
+                "R_eff": float(np.nan),
+                "packet_age": float(packet_age),
+                "t_tx_payload": float(t_tx),
+                "t_meas": float(t_meas),
+                "hx": float(np.nan),
+                "hy": float(np.nan),
+                "hz": float(np.nan),
+                "Kx": float(np.nan),
+                "Ky": float(np.nan),
+                "Kz": float(np.nan),
+                "Kpsi": float(np.nan),
+                "Ku": float(np.nan),
+                "Kv": float(np.nan),
+                "K_norm": float(np.nan),
+                "sender_x_hat": float(p_j[0]),
+                "sender_y_hat": float(p_j[1]),
+                "sender_z_hat": float(p_j[2]),
+                "sender_Pxx": float(P_j[0, 0]),
+                "sender_Pyy": float(P_j[1, 1]),
+                "sender_Pzz": float(P_j[2, 2]),
+                "receiver_x_pre": float(x_pre[0]),
+                "receiver_y_pre": float(x_pre[1]),
+                "receiver_z_pre": float(x_pre[2]),
+                "receiver_x_post": float(x_pre[0]),
+                "receiver_y_post": float(x_pre[1]),
+                "receiver_z_post": float(x_pre[2]),
+                "traceP_pre": float(np.trace(P_pre[:3, :3])),
+                "traceP_post": float(np.trace(P_pre[:3, :3])),
+            })
             return
 
         H_i = np.array([[diff[0] / r_hat, diff[1] / r_hat, diff[2] / r_hat, 0.0, 0.0, 0.0]], dtype=float)
         H_j = np.array([[-diff[0] / r_hat, -diff[1] / r_hat, -diff[2] / r_hat]], dtype=float)
 
-        R_eff = float(self.R_range + (H_j @ P_j @ H_j.T)[0, 0] + self.age_inflation * packet_age)
+        R_eff = float(
+            self.R_range
+            + self.alpha * (H_j @ P_j @ H_j.T)[0, 0]
+            + self.age_inflation * packet_age
+        )
         R_eff = max(R_eff, 1e-12)
 
         nu = float(z - r_hat)
-
         self.nu = nu
 
         S = float((H_i @ st.P @ H_i.T)[0, 0] + R_eff)
 
         if S <= 0.0:
+            self.coop_update_log.append({
+                "t": float(t_now),
+                "receiver": receiver_name,
+                "sender": sender_name,
+                "accepted": 0,
+                "reject_reason": "nonpositive_S",
+                "range": float(z),
+                "r_hat": float(r_hat),
+                "nu": float(nu),
+                "nis": float(np.nan),
+                "S": float(S),
+                "R_eff": float(R_eff),
+                "packet_age": float(packet_age),
+                "t_tx_payload": float(t_tx),
+                "t_meas": float(t_meas),
+                "hx": float(H_i[0, 0]),
+                "hy": float(H_i[0, 1]),
+                "hz": float(H_i[0, 2]),
+                "Kx": float(np.nan),
+                "Ky": float(np.nan),
+                "Kz": float(np.nan),
+                "Kpsi": float(np.nan),
+                "Ku": float(np.nan),
+                "Kv": float(np.nan),
+                "K_norm": float(np.nan),
+                "sender_x_hat": float(p_j[0]),
+                "sender_y_hat": float(p_j[1]),
+                "sender_z_hat": float(p_j[2]),
+                "sender_Pxx": float(P_j[0, 0]),
+                "sender_Pyy": float(P_j[1, 1]),
+                "sender_Pzz": float(P_j[2, 2]),
+                "receiver_x_pre": float(x_pre[0]),
+                "receiver_y_pre": float(x_pre[1]),
+                "receiver_z_pre": float(x_pre[2]),
+                "receiver_x_post": float(x_pre[0]),
+                "receiver_y_post": float(x_pre[1]),
+                "receiver_z_post": float(x_pre[2]),
+                "traceP_pre": float(np.trace(P_pre[:3, :3])),
+                "traceP_post": float(np.trace(P_pre[:3, :3])),
+            })
             return
 
         K = (st.P @ H_i.T) / S
@@ -346,18 +404,48 @@ class EKFNavFilter(BaseNavFilter):
         st.last_coop_update = float(t_now)
         st.quality = float(np.trace(st.P[:3, :3]))
 
-        #DEBUG 
+        nis = float((nu ** 2) / S)
 
-        # log innovation
-        if hasattr(self, "innovation_log"):
-            self.innovation_log.append({
-                "t": t_now,
-                "receiver": receiver_name,
-                "z": z,
-                "r_hat": r_hat,
-                "nu": self.nu,
-                "packet_age": packet_age
-            })
+        self.coop_update_log.append({
+            "t": float(t_now),
+            "receiver": receiver_name,
+            "sender": sender_name,
+            "accepted": 1,
+            "reject_reason": "",
+            "range": float(z),
+            "r_hat": float(r_hat),
+            "nu": float(nu),
+            "nis": float(nis),
+            "S": float(S),
+            "R_eff": float(R_eff),
+            "packet_age": float(packet_age),
+            "t_tx_payload": float(t_tx),
+            "t_meas": float(t_meas),
+            "hx": float(H_i[0, 0]),
+            "hy": float(H_i[0, 1]),
+            "hz": float(H_i[0, 2]),
+            "Kx": float(K[0, 0]),
+            "Ky": float(K[1, 0]),
+            "Kz": float(K[2, 0]),
+            "Kpsi": float(K[3, 0]),
+            "Ku": float(K[4, 0]),
+            "Kv": float(K[5, 0]),
+            "K_norm": float(np.linalg.norm(K[:, 0])),
+            "sender_x_hat": float(p_j[0]),
+            "sender_y_hat": float(p_j[1]),
+            "sender_z_hat": float(p_j[2]),
+            "sender_Pxx": float(P_j[0, 0]),
+            "sender_Pyy": float(P_j[1, 1]),
+            "sender_Pzz": float(P_j[2, 2]),
+            "receiver_x_pre": float(x_pre[0]),
+            "receiver_y_pre": float(x_pre[1]),
+            "receiver_z_pre": float(x_pre[2]),
+            "receiver_x_post": float(st.x[0]),
+            "receiver_y_post": float(st.x[1]),
+            "receiver_z_post": float(st.x[2]),
+            "traceP_pre": float(np.trace(P_pre[:3, :3])),
+            "traceP_post": float(np.trace(st.P[:3, :3])),
+        })
 
         if self.keep_history:
             st.history.append(("coop", t_now, st.x.copy(), st.P.copy()))
@@ -367,21 +455,9 @@ class EKFNavFilter(BaseNavFilter):
     # ==========================================================
 
     def _propagate_shadow(self, agent, sim, model_template, x_state):
-        """
-        Velocity-driven DR with simulator-consistent nominal dynamics.
-
-        The shadow model is used to propagate:
-        - heading psi
-        - depth z
-        - nominal body velocity [u, v]
-
-        Then x,y are propagated explicitly from the EKF velocity state:
-            p_{k+1} = p_k + R(psi_k) [u_k, v_k] dt
-        """
         m = copy.deepcopy(model_template)
         dt = float(sim.Dt)
 
-        # impose EKF state on shadow model
         m.pos = np.array([x_state[0], x_state[1], x_state[2]], dtype=float)
         m.psi = float(x_state[3])
         m.Dt = dt
@@ -392,7 +468,6 @@ class EKFNavFilter(BaseNavFilter):
         if hasattr(m, "last_step_pos"):
             m.last_step_pos = np.array([x_state[0], x_state[1], x_state[2]], dtype=float)
 
-        # synchronize commands/inputs from real agent
         for attr in (
             "cmd_depth", "cmd_heave", "cmd_heading", "cmd_yawrate",
             "cmd_planar", "cmd_local_vel", "cmd_forces", "other_forces",
@@ -401,20 +476,15 @@ class EKFNavFilter(BaseNavFilter):
             if hasattr(agent, attr):
                 setattr(m, attr, copy.deepcopy(getattr(agent, attr)))
 
-        # deterministic feedback for control laws
         m.measured_depth = float(m.pos[2])
         m.measured_heading = float(m.psi)
         m.measured_pos = m.pos[:2].copy()
 
-        # propagate shadow heading/depth and internal dynamic state
         m._update_heading()
         m._update_depth()
         m._update_planar(m.Dt)
 
-        # nominal body velocity from simulator-consistent shadow model
         vel_body_nom = self._get_body_velocity_from_shadow(m, x_state, dt)
-
-        # velocity-driven dead reckoning for position
         vel_ned = self._body_to_ned_2d(vel_body_nom, x_state[3])
 
         x_next = np.array([
@@ -426,7 +496,6 @@ class EKFNavFilter(BaseNavFilter):
             float(vel_body_nom[1]),
         ], dtype=float)
 
-        # keep shadow pose aligned with propagated EKF state
         m.pos[0] = x_next[0]
         m.pos[1] = x_next[1]
         m.pos[2] = x_next[2]
@@ -438,11 +507,6 @@ class EKFNavFilter(BaseNavFilter):
         return x_next, m
 
     def _numerical_transition_jacobian(self, agent, sim, st):
-        """
-        Numerical Jacobian of:
-            x_{k+1} = f(x_k, u_k)
-        using central finite differences.
-        """
         x0 = st.x.copy()
         n = x0.size
         F = np.zeros((n, n), dtype=float)
@@ -480,21 +544,14 @@ class EKFNavFilter(BaseNavFilter):
 
     def _get_body_velocity_measurement(self, agent, sim):
         vel_body = self._get_body_velocity_from_agent(agent, sim)
-
         vel_noise = self.rng.normal(
             loc=0.0,
             scale=np.sqrt(np.diag(self.R_body_vel)),
             size=2
         )
-
         return vel_body + vel_noise
-        # return vel_body + vel_noise
 
     def _get_body_velocity_from_agent(self, agent, sim):
-        """
-        Best-effort extraction of body-frame velocity from true motion.
-        Uses EKF-side previous true position.
-        """
         st = self.filters[agent.name]
 
         if st.prev_true_pos is not None:
@@ -507,13 +564,6 @@ class EKFNavFilter(BaseNavFilter):
         return np.zeros(2, dtype=float)
 
     def _get_body_velocity_from_shadow(self, model_agent, x_state, dt):
-        """
-        Extract nominal body velocity for propagation.
-
-        Priority:
-        - for local_forces: use dynamic state incurrent_velocity
-        - otherwise: use the EKF state velocity itself, since DR is velocity-driven
-        """
         if getattr(model_agent, "planar_control", "") == "local_forces":
             if hasattr(model_agent, "incurrent_velocity"):
                 return np.asarray(model_agent.incurrent_velocity, dtype=float).reshape(2).copy()
@@ -522,18 +572,6 @@ class EKFNavFilter(BaseNavFilter):
 
     @staticmethod
     def _ned_to_body_2d(v_ned, psi_deg):
-        """
-        Convert planar NED velocity [vx, vy] to body velocity [u, v].
-
-        Simulator convention:
-            velocity_ned = R_mat @ vel_body
-        with
-            R_mat = [[cos(psi),  sin(psi)],
-                     [sin(psi), -cos(psi)]]
-
-        Therefore:
-            vel_body = R_mat.T @ velocity_ned
-        """
         psi = np.deg2rad(psi_deg)
         sinpsi = np.sin(psi)
         cospsi = np.cos(psi)
@@ -547,9 +585,6 @@ class EKFNavFilter(BaseNavFilter):
 
     @staticmethod
     def _body_to_ned_2d(v_body, psi_deg):
-        """
-        Convert body velocity [u, v] to planar NED velocity [vx, vy].
-        """
         psi = np.deg2rad(psi_deg)
         sinpsi = np.sin(psi)
         cospsi = np.cos(psi)

@@ -16,7 +16,6 @@ class HistoryShortMemory:
         # load length
         self.set_history_length()
         self.initiate_agents()
-        print('self.HISTORY_LENGTH',self.HISTORY_LENGTH)
 
 
     def initiate_agents(self) -> None:

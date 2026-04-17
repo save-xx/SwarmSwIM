@@ -15,6 +15,20 @@ def build_nav_payload(agent, tx_time):
         "cov": np.diag(st.P[:3, :3]).tolist()
     }
 
+def log_coop_update_debug(nav, coop_update_debug_logs):
+    """
+    Pull accepted/rejected cooperative EKF update records from nav.coop_update_log
+    into an external list, then clear the internal buffer.
+    """
+    if not hasattr(nav, "coop_update_log"):
+        return coop_update_debug_logs
+
+    if nav.coop_update_log:
+        coop_update_debug_logs.extend(nav.coop_update_log)
+        nav.coop_update_log.clear()
+
+    return coop_update_debug_logs
+
 def log_nav_step(sim, nav, agents, nav_logs):
     for agent in agents.values():
         st = nav.get_state(agent)

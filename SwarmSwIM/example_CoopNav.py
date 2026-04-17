@@ -16,10 +16,10 @@ import numpy as np
 #"with_ranging"
 #"no_range"
 
-def save_all_logs(nav_logs,coop_logs):
+def save_all_logs(nav_logs,coop_logs,coop_update_debug_logs):
     futils.save_csv(nav_logs, LOG_DIR / "with_ranging" /"nav_log.csv")
     futils.save_csv(coop_logs, LOG_DIR / "with_ranging" /"coop_log.csv")
-
+    futils.save_csv(coop_update_debug_logs, LOG_DIR / "with_ranging" / "coop_update_debug_log.csv")
 
 # =================================
 # Logging
@@ -30,7 +30,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 nav_logs = []
 coop_logs = []
-print('.................................................................',nav_logs)
+coop_update_debug_logs = []
 
 # =================================
 # Simulation parameters
@@ -74,7 +74,6 @@ absolute_heading = [180, 180, 180, 180]
 i = 0
 for a in S.agents.values():
     i += 1
-    print(a.name, a.planar_control, a.cmd_forces, a.cmd_planar, a.cmd_heading)
     a.set_VelocityCmd(body_vels['A0' + str(i)], mode="inertial_velocity")
     a.set_Heading(absolute_heading[i - 1], mode="step")
 
@@ -95,7 +94,6 @@ header_bytes = 8
 total_bits = (len(payload_bytes) + header_bytes) * 8
 
 tx_duration = total_bits / bps
-print(tx_duration)
 slot_duration = tx_duration + guard_time
 frame_duration = slot_duration * len(S.agents)
 
@@ -148,7 +146,7 @@ properties = {
 frame = 0
 next_frame_time = 0.0
 
-def cycle(nav_logs,coop_logs):
+def cycle(nav_logs,coop_logs,coop_update_debug_logs):
     global frame, next_frame_time
 
     # =================================
@@ -198,6 +196,8 @@ def cycle(nav_logs,coop_logs):
     # =================================
     futils.log_nav_step(S, Nav, S.agents, nav_logs)
     futils.log_coop_events(S, delivered, Nav, coop_logs)
+    futils.log_coop_update_debug(Nav, coop_update_debug_logs)
+
 
     # =================================
     # Visualization bookkeeping
@@ -261,36 +261,6 @@ def cycle(nav_logs,coop_logs):
                 f"t_tx={tx['tx_time']:8.3f}"
             )
 
-        print("\n--- Coop Updates Debug ---")
-        print(delivered.items())
-        for receiver_name, msg in delivered.items():
-            
-            '''if msg is None or not msg.intact:
-                continue'''
-
-            payload = msg.payload
-            '''if payload is None:
-                continue'''
-
-            sender = msg.sender
-            receiver = S.agents[receiver_name]
-
-            '''if not hasattr(receiver, "AcousticRange"):
-                continue
-            if sender not in receiver.AcousticRange:
-                continue'''
-
-            meas = receiver.AcousticRange[sender]
-
-            print(
-                f"{receiver_name} <- {sender} | "
-                f"range={meas['range']:6.2f} | "
-                f"payload_tx={payload.get('tx_time', np.nan):8.3f} | "
-                f"meas_t_tx={meas.get('t_tx', np.nan):8.3f} | "
-                f"meas_t_rx={meas.get('t_rx', np.nan):8.3f} | "
-                f"meas_t_meas={meas.get('t_meas', np.nan):8.3f} | "
-                f"sim_now={S.time:8.3f}"
-            )
         print()
 
         max_age = frame_duration
@@ -309,11 +279,11 @@ def cycle(nav_logs,coop_logs):
 # =================================
 
 def cycle_callback():
-    cycle(nav_logs, coop_logs)
+    cycle(nav_logs, coop_logs,coop_update_debug_logs)
 
 visualizer = Visualizer2D(S, cycle_callback, properties, mac=MAC)
 
 try:
     visualizer.run()
 finally:
-    save_all_logs(nav_logs, coop_logs)
+    save_all_logs(nav_logs, coop_logs,coop_update_debug_logs)
