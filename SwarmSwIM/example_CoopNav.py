@@ -13,10 +13,12 @@ from pathlib import Path
 import numpy as np
 
 
+#"with_ranging"
+#"no_range"
 
 def save_all_logs(nav_logs,coop_logs):
-    futils.save_csv(nav_logs, LOG_DIR / "nav_log.csv")
-    futils.save_csv(coop_logs, LOG_DIR / "coop_log.csv")
+    futils.save_csv(nav_logs, LOG_DIR / "with_ranging" /"nav_log.csv")
+    futils.save_csv(coop_logs, LOG_DIR / "with_ranging" /"coop_log.csv")
 
 
 # =================================
@@ -67,7 +69,7 @@ body_vels = {
     "A03": [0.2, 0.0],
     "A04": [0.2, 0.0]
 }
-absolute_heading = [0, 180, 90, 270]
+absolute_heading = [180, 180, 180, 180]
 
 i = 0
 for a in S.agents.values():
@@ -93,6 +95,7 @@ header_bytes = 8
 total_bits = (len(payload_bytes) + header_bytes) * 8
 
 tx_duration = total_bits / bps
+print(tx_duration)
 slot_duration = tx_duration + guard_time
 frame_duration = slot_duration * len(S.agents)
 
@@ -142,24 +145,27 @@ properties = {
 # Simulation callback
 # =================================
 
-counter = 0
-
+frame = 0
+next_frame_time = 0.0
 
 def cycle(nav_logs,coop_logs):
-    global counter
-    counter += 1
+    global frame, next_frame_time
 
     # =================================
     # TDMA scheduling
     # =================================
 
-    if counter % frame_steps == 0:
+    new_frame = False
+    if S.time + 1e-9 >= next_frame_time:
+        new_frame = True
         for agent in S.agents.values():
             MAC.request_tx(
                 agent,
-                payload=futils.build_nav_payload(agent, S.time),
+                payload_builder=futils.build_nav_payload,
                 duration=tx_duration
             )
+        frame += 1
+        next_frame_time = frame * frame_duration
 
     # =================================
     # Physics step
@@ -172,6 +178,8 @@ def cycle(nav_logs,coop_logs):
     # =================================
 
     delivered = MAC(S)
+
+
 
     # =================================
     # Ranging extraction
@@ -201,7 +209,7 @@ def cycle(nav_logs,coop_logs):
     # Print once per TDMA frame
     # =================================
 
-    if counter % frame_steps == 0:
+    if new_frame:
 
         print(f"\n{'='*20} TDMA Frame @ t={S.time:6.2f}s {'='*20}")
 
@@ -254,32 +262,35 @@ def cycle(nav_logs,coop_logs):
             )
 
         print("\n--- Coop Updates Debug ---")
+        print(delivered.items())
         for receiver_name, msg in delivered.items():
-            if msg is None or not msg.intact:
-                continue
+            
+            '''if msg is None or not msg.intact:
+                continue'''
 
             payload = msg.payload
-            if payload is None:
-                continue
+            '''if payload is None:
+                continue'''
 
             sender = msg.sender
             receiver = S.agents[receiver_name]
 
-            if not hasattr(receiver, "AcousticRange"):
+            '''if not hasattr(receiver, "AcousticRange"):
                 continue
             if sender not in receiver.AcousticRange:
-                continue
+                continue'''
 
             meas = receiver.AcousticRange[sender]
 
             print(
                 f"{receiver_name} <- {sender} | "
-                f"range={meas['range']:6.2f}  "
-                f"tx_time={payload.get('tx_time', -1):6.2f}  "
-                f"pos={payload.get('pos', [])}  "
-                f"cov={payload.get('cov', [])}"
+                f"range={meas['range']:6.2f} | "
+                f"payload_tx={payload.get('tx_time', np.nan):8.3f} | "
+                f"meas_t_tx={meas.get('t_tx', np.nan):8.3f} | "
+                f"meas_t_rx={meas.get('t_rx', np.nan):8.3f} | "
+                f"meas_t_meas={meas.get('t_meas', np.nan):8.3f} | "
+                f"sim_now={S.time:8.3f}"
             )
-
         print()
 
         max_age = frame_duration
@@ -291,7 +302,7 @@ def cycle(nav_logs,coop_logs):
                 k: v for k, v in agent.AcousticRange.items()
                 if S.time - v["t_meas"] < max_age
             }
-
+    
 
 # =================================
 # Run visualizer

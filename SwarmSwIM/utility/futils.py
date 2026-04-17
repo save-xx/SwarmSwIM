@@ -4,12 +4,12 @@ from pathlib import Path
 
 import numpy as np
 
-def build_nav_payload(agent, sim_time):
+def build_nav_payload(agent, tx_time):
     st = agent.nav_state
 
     return {
         "id": agent.name,
-        "tx_time": sim_time,
+        "tx_time": tx_time,
         "pos": st.x[:3].tolist(),
         "heading": float(st.x[3]),
         "cov": np.diag(st.P[:3, :3]).tolist()
@@ -52,10 +52,12 @@ def log_nav_step(sim, nav, agents, nav_logs):
             "Ppsi": float(diagP[3]),
             "Puu": float(diagP[4]),
             "Pvv": float(diagP[5]),
+            
 
             "last_local_update": float(st.last_local_update),
             "last_coop_update": float(st.last_coop_update),
             "quality": float(st.quality),
+
         })
     return nav_logs
 
@@ -99,7 +101,7 @@ def log_coop_events(sim, delivered, nav, coop_logs):
             "range": float(meas.get("range", np.nan)),
             "t_meas": float(meas.get("t_meas", np.nan)),
             "t_tx_payload": float(payload.get("tx_time", np.nan)),
-            "packet_age": float(sim.time - payload.get("tx_time", sim.time)),
+            "packet_age": float(meas.get("t_meas", np.nan) - payload.get("tx_time", np.nan)),
 
             "sender_x_hat": float(payload_pos[0]),
             "sender_y_hat": float(payload_pos[1]),
@@ -113,7 +115,9 @@ def log_coop_events(sim, delivered, nav, coop_logs):
             "receiver_y_hat": float(st.x[1]),
             "receiver_z_hat": float(st.x[2]),
             "receiver_traceP_pos": float(np.trace(st.P[:3, :3])),
+            "nu" : float(meas.get("nu", np.nan)),
         })
+        
     return coop_logs
 
 def save_csv(rows, filepath):

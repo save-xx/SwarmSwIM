@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import deque
-
+import time
 
 class Base_MAC(ABC):
     """
@@ -57,14 +57,13 @@ class Base_MAC(ABC):
 
         self._n_agents = len(agents)
 
-    def request_tx(self, agent, payload, duration):
+    def request_tx(self, agent, payload_builder, duration):
 
         packet = {
             "agent": agent,
-            "payload": payload,
+            "payload_builder": payload_builder,
             "duration": duration
         }
-
         self.queues[agent.name].append(packet)
 
     def get_frame_report(self):
@@ -112,8 +111,10 @@ class Base_MAC(ABC):
     def _attempt_tx(self, sim, packet):
 
         agent = packet["agent"]
-        payload = packet["payload"]
+        payload_builder = packet["payload_builder"]
         duration = packet["duration"]
+
+        payload = payload_builder(agent, sim.time)
 
         success, status = self.acoustic.send(agent, payload, duration)
 

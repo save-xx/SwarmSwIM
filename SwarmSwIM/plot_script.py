@@ -3,10 +3,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
+#"with_ranging"
+#"no_range"
+
 LOG_DIR = Path("logs")
-NAV_FILE = LOG_DIR / "nav_log.csv"
-COOP_FILE = LOG_DIR / "coop_log.csv"
-FIG_DIR = LOG_DIR / "figures"
+
+NAV_FILE = LOG_DIR / "with_ranging" /"nav_log.csv"
+COOP_FILE = LOG_DIR / "with_ranging" /"coop_log.csv"
+FIG_DIR = LOG_DIR / "with_ranging" /"figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 

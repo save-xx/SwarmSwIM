@@ -37,14 +37,26 @@ class AcousticRanging:
 
             # compute ToF
             #tof = msg.ToA_exact - msg.ToD_exact - msg.duration
-            tof = msg.perfect_range / self.c
+ 
+            t_tx = float(msg.ToD_exact)
+            tof = float(msg.perfect_range / self.c)
+
+            t_range = t_tx + tof
+            t_packet_done = float(msg.ToA_exact)
 
             receiver.AcousticRange[sender] = {
                 "range": msg.ping_range,
                 "perfect_range": msg.perfect_range,
                 "tof": tof,
-                "t_tx": msg.ToD_exact,
-                "t_rx": msg.ToA_exact,
+
+                "t_tx": t_tx,
+
+                # first-arrival / ranging time
+                "t_rx": t_range,
+                "t_meas": t_range,
+
+                # optional: keep packet completion time too
+                "t_packet_done": t_packet_done,
+
                 "doppler": msg.doppler_velocity,
-                "t_meas": simulation.time
             }

@@ -57,8 +57,9 @@ class TDMA_MAC(Base_MAC):
         slot_start = slot_idx * self.slot_duration
         slot_end = slot_start + self.slot_duration - self.guard_time
 
+        tol = 0.0
         # ensure we are inside the usable part of the slot
-        if not (slot_start <= t_frame < slot_end):
+        if not (slot_start+tol <= t_frame < slot_end+tol):
             return
 
         # if the agent has queued packets, transmit one

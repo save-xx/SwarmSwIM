@@ -24,6 +24,9 @@ class NavState:
     model_agent: object = None
     prev_true_pos: np.ndarray | None = None
 
+    # last processed cooperative measurement timestamp per sender
+    last_coop_meas_time: dict = field(default_factory=dict)
+
     # optional bookkeeping
     history: list = field(default_factory=list)
 
@@ -59,7 +62,7 @@ class EKFNavFilter(BaseNavFilter):
         R_depth=0.25,
         R_heading_deg2=9.0,
         R_body_vel_diag=(0.05, 0.05),
-        R_range=1.0,
+        R_range=100.0,
         P0_diag=(4.0, 4.0, 1.0, 25.0, 0.25, 0.25),
         max_packet_age=np.inf,
         age_inflation=0.0,
@@ -85,6 +88,8 @@ class EKFNavFilter(BaseNavFilter):
         self.keep_history = bool(keep_history)
 
         self.rng = np.random.default_rng(rng_seed)
+        self.innovation_log = []
+        self.nu = np.nan #debug
 
     # ==========================================================
     # Base hooks
@@ -214,6 +219,7 @@ class EKFNavFilter(BaseNavFilter):
             if sender_name not in receiver.AcousticRange:
                 continue
 
+            st = self.filters[receiver_name]
             meas = receiver.AcousticRange[sender_name]
             payload = msg.payload
 
@@ -222,6 +228,20 @@ class EKFNavFilter(BaseNavFilter):
             if "pos" not in payload or "cov" not in payload:
                 continue
 
+            t_meas = meas.get("t_meas", None)
+            if t_meas is None:
+                continue
+            t_meas = float(t_meas)
+
+            last_t_meas = st.last_coop_meas_time.get(sender_name, -np.inf)
+            if t_meas <= last_t_meas:
+                print(
+                    f"SKIP REUSED MEAS | rx={receiver_name} tx={sender_name} "
+                    f"t_meas={t_meas:.3f} last={last_t_meas:.3f}"
+                )
+
+                continue
+            
             p_j = np.asarray(payload["pos"], dtype=float).reshape(-1)
             if p_j.size != 3:
                 continue
@@ -234,20 +254,48 @@ class EKFNavFilter(BaseNavFilter):
             t_rx = float(meas.get("t_rx", sim.time))
             packet_age = max(0.0, t_rx - t_tx)
 
+
             if packet_age > self.max_packet_age:
                 continue
 
             z = float(meas["range"])
 
-            
-            '''self._update_cooperative_range(
-                 receiver_name=receiver_name,
-                 p_j=p_j,
-                 P_j=P_j,
-                 z=z,
-                 packet_age=packet_age,
-                 t_now=sim.time
-             )'''
+            print(
+                f"NEW COOP UPDATE | rx={receiver_name} tx={sender_name} "
+                f"t_meas={t_meas:.3f} last={last_t_meas:.3f}"
+            )
+
+            # --- DEBUG CONSISTENCY CHECK ---
+
+            t_tx_payload = float(payload.get("tx_time", np.nan))
+            t_tx_meas = float(meas.get("t_tx", np.nan))
+            t_meas = float(meas.get("t_meas", np.nan))
+            rng = float(meas.get("range", np.nan))
+            pos = payload.get("pos", [])
+
+            dt = t_tx_payload - t_tx_meas
+
+            print(
+                f"[COOP] rx={receiver_name} "
+                f"tx={sender_name} | "
+                f"tx_payload={t_tx_payload:8.3f} "
+                f"tx_meas={t_tx_meas:8.3f} "
+                f"Δtx={dt:+.6f} | "
+                f"t_meas={t_meas:8.3f} | "
+                f"range={rng:7.2f} | "
+                f"pos={np.round(pos, 3)}"
+            )
+
+            self._update_cooperative_range(
+                receiver_name=receiver_name,
+                p_j=p_j,
+                P_j=P_j,
+                z=z,
+                packet_age=packet_age,
+                t_now=sim.time
+            )
+
+            st.last_coop_meas_time[sender_name] = t_meas
 
         if self.writeback:
             self._writeback_all(sim)
@@ -257,11 +305,14 @@ class EKFNavFilter(BaseNavFilter):
     # ==========================================================
 
     def _update_cooperative_range(self, receiver_name, p_j, P_j, z, packet_age, t_now):
+
+        
         st = self.filters[receiver_name]
 
         p_i = st.x[:3].copy()
         diff = p_i - p_j
         r_hat = float(np.linalg.norm(diff))
+
 
         if r_hat < self.min_range:
             return
@@ -273,6 +324,9 @@ class EKFNavFilter(BaseNavFilter):
         R_eff = max(R_eff, 1e-12)
 
         nu = float(z - r_hat)
+
+        self.nu = nu
+
         S = float((H_i @ st.P @ H_i.T)[0, 0] + R_eff)
 
         if S <= 0.0:
@@ -291,6 +345,19 @@ class EKFNavFilter(BaseNavFilter):
 
         st.last_coop_update = float(t_now)
         st.quality = float(np.trace(st.P[:3, :3]))
+
+        #DEBUG 
+
+        # log innovation
+        if hasattr(self, "innovation_log"):
+            self.innovation_log.append({
+                "t": t_now,
+                "receiver": receiver_name,
+                "z": z,
+                "r_hat": r_hat,
+                "nu": self.nu,
+                "packet_age": packet_age
+            })
 
         if self.keep_history:
             st.history.append(("coop", t_now, st.x.copy(), st.P.copy()))
@@ -548,6 +615,7 @@ class EKFNavFilter(BaseNavFilter):
                 "last_coop_update": float(st.last_coop_update),
                 "quality": float(st.quality),
                 "t": float(st.t),
+                "nu": float(self.nu)
             }
 
     # ==========================================================
