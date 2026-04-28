@@ -49,11 +49,11 @@
         <!-- Sensors Sensibility: [bias, random standard deviation] -->
         <e_depth>0.0 0.0</e_depth> <!-- m -->
         <e_heave>0.0 0.0</e_heave> <!-- m/s -->
-        <e_heading>0.0 0.0</e_heading> <!-- deg -->
+        <e_heading>0.0 2.0</e_heading> <!-- deg -->
         <e_yawrate>0.0 0.0</e_yawrate> <!-- deg/s -->
         <e_position>0.0 0.0</e_position> <!-- m -->
-        <e_local_vel>0.0 0.0</e_local_vel> <!-- m/s -->
-        <e_inertial_vel>0.0 0.0</e_inertial_vel> <!-- m/s -->
+        <e_local_vel>0.0 0.05</e_local_vel> <!-- m/s -->
+        <e_inertial_vel>0.0 0.05</e_inertial_vel> <!-- m/s -->
         <e_local_force>0.0 0.0</e_local_force> <!-- N -->
         <clock_drift>0.0</clock_drift> <!-- PPM -->
 

@@ -126,6 +126,7 @@ class BaseNavFilter(ABC):
         for agent in sim.agents.values():
             self.update_local(agent, sim)
 
+        #
         self.process_cooperative(sim, delivered)
 
         self.post_step(sim, delivered)

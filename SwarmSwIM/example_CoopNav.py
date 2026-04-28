@@ -16,10 +16,16 @@ import numpy as np
 #"with_ranging"
 #"no_range"
 
+ranging = True
+if ranging:
+    log_str = "with_ranging"
+else:
+    log_str = "no_range"
+
 def save_all_logs(nav_logs,coop_logs,coop_update_debug_logs):
-    futils.save_csv(nav_logs, LOG_DIR / "with_ranging" /"nav_log.csv")
-    futils.save_csv(coop_logs, LOG_DIR / "with_ranging" /"coop_log.csv")
-    futils.save_csv(coop_update_debug_logs, LOG_DIR / "with_ranging" / "coop_update_debug_log.csv")
+    futils.save_csv(nav_logs, LOG_DIR / log_str /"nav_log.csv")
+    futils.save_csv(coop_logs, LOG_DIR / log_str /"coop_log.csv")
+    futils.save_csv(coop_update_debug_logs, LOG_DIR / log_str / "coop_update_debug_log.csv")
 
 # =================================
 # Logging
@@ -65,16 +71,16 @@ activate_Currents(S)
 
 body_vels = {
     "A01": [0.2, 0.0],
-    "A02": [0.2, 0.0],
-    "A03": [0.2, 0.0],
-    "A04": [0.2, 0.0]
+    "A02": [0.6, 0.0],
+    "A03": [0.3, 0.0],
+    "A04": [0.5, 0.0]
 }
 absolute_heading = [180, 180, 180, 180]
 
 i = 0
 for a in S.agents.values():
     i += 1
-    a.set_VelocityCmd(body_vels['A0' + str(i)], mode="inertial_velocity")
+    a.set_VelocityCmd(body_vels['A0' + str(i)], mode="local_velocity")
     a.set_Heading(absolute_heading[i - 1], mode="step")
 
 # Activate acoustic channel
@@ -177,8 +183,6 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
 
     delivered = MAC(S)
 
-
-
     # =================================
     # Ranging extraction
     # =================================
@@ -222,20 +226,22 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
                 f"z={agent.pos[2]:6.3f}"
             )
 
+
         print("\n--- Estimation Error ---")
         for agent in S.agents.values():
             if not hasattr(agent, "nav_state"):
                 continue
 
             st = agent.nav_state
+            
             err = st.x[:3] - agent.pos
 
             print(
                 f"{agent.name:>3} | "
-                f"x_hat={st.x[:6].round(3)}"
-                f"ex={err[0]:7.6f}  "
-                f"ey={err[1]:7.6f}  "
-                f"ez={err[2]:7.6f}  "
+                f"x_hat={np.array2string(st.x[:6], precision=3, floatmode='fixed', suppress_small=True,separator=' ')}"
+                f"ex={err[0]:7.3f}  "
+                f"ey={err[1]:7.3f}  "
+                f"ez={err[2]:7.3f}  "
                 f"| norm={np.linalg.norm(err):6.3f}"
             )
 

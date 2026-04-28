@@ -12,7 +12,8 @@ def build_nav_payload(agent, tx_time):
         "tx_time": tx_time,
         "pos": st.x[:3].tolist(),
         "heading": float(st.x[3]),
-        "cov": np.diag(st.P[:3, :3]).tolist()
+        "cov": np.diag(st.P[:3, :3]).tolist(),
+        "body_vel": st.x[4:6].tolist()
     }
 
 def log_coop_update_debug(nav, coop_update_debug_logs):

@@ -130,8 +130,10 @@ class AcousticChannel:
         
     def emulate_error (self, data: float, error: np.ndarray) -> float:
         ''' Alter the input data to simulate measurment errors '''
+
         data += error[0]
         data += self.rnd.normal(scale=error[1])
+
         return data
 
 
@@ -214,6 +216,7 @@ class AcousticChannel:
         e_range = np.array([self.rnd.uniform(
             -self.e_range[0], self.e_range[0]), self.e_range[1]
             ])
+        print(e_range)
         agent.acoustic_channels[channel_name].e_range = e_range
         # randomized biases doppler error
         e_doppler = np.array([self.rnd.uniform(

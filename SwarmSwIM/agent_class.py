@@ -51,11 +51,12 @@ class Agent():
         # set initial Yawrate
         self.yawrate = 0.0
 
-        # Genrate random seed based on name
+        # Genrate random seed based on name #(andrea) wrong
+        rng = 0
         if not rng:
             self.rnd = np.random.default_rng()
         else:
-            self.rnd = np.random.default_rng(hash(name) % 2**20 + rng)
+            self.rnd = np.random.default_rng(rng)#hash(name) % 2**20 + 
 
         # Load agent parameters from xml
         self.agent_type = agent_xml
@@ -289,6 +290,7 @@ class Agent():
     def _update_planar(self, Dt):
         """Tick based update of the planar position."""
         def get_emulated_velocities():
+
             return np.array([self.emulate_error(self.cmd_local_vel[0], self.e_local_vel),
                     self.emulate_error(-self.cmd_local_vel[1], self.e_local_vel)])
 
@@ -320,12 +322,14 @@ class Agent():
 
         elif "local_velocity" == self.planar_control:
             emulated_velocities = get_emulated_velocities()
+            self.emulated_velocities = emulated_velocities
             self.pos[0] += (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
             self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
 
         elif "inertial_velocity" == self.planar_control:
             step = (self.Dt * self.vel_limit)
             emulated_velocities = get_emulated_inertial()
+
             # current effect in the last step, in body axis
             current_disturbance = self.pos[0:2] - self.last_step_pos[0:2] 
             current_disturbance_body = R_mat.transpose() @ current_disturbance
