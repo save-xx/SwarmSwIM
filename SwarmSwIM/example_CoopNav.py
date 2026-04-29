@@ -4,6 +4,7 @@ from SwarmSwIM import Visualizer2D
 from utility import futils
 
 from mac.tdma import TDMA_MAC
+from mac.adaptive_mac import Adaptive_TDMA_MAC
 from sensors.acoustic_ranging import AcousticRanging
 from navigation.ekf_nav import EKFNavFilter
 
@@ -21,6 +22,14 @@ if ranging:
     log_str = "with_ranging"
 else:
     log_str = "no_range"
+
+# =================================
+# MAC mode selection
+# =================================
+
+mac_mode = "adaptive"          # "tdma" or "adaptive"
+leader_id = "A04"          # fixed leader for adaptive mode
+K_select = 2               # number of selected agents in adaptive mode
 
 def save_all_logs(nav_logs,coop_logs,coop_update_debug_logs):
     futils.save_csv(nav_logs, LOG_DIR / log_str /"nav_log.csv")
@@ -53,11 +62,23 @@ PDR = 1.0
 c = 1500
 
 payload_template = {
+    "type": "nav",
     "id": 0,
     "tx_time": 0.0,
     "pos": [0.0, 0.0, 0.0],
     "heading": 0.0,
     "cov": [0.0, 0.0, 0.0],
+    "body_vel": [0.0, 0.0],
+}
+
+payload_min_template = {
+    "type": "consensus",
+    "id": 0,
+    "tx_time": 0.0,
+    "q": 0.0,
+    "leader_id": 0,
+    "proposal_frame": 0,
+    "schedule": "schedule",
 }
 
 # =================================
@@ -103,18 +124,40 @@ tx_duration = total_bits / bps
 slot_duration = tx_duration + guard_time
 frame_duration = slot_duration * len(S.agents)
 
+if mac_mode == "adaptive":
+    payload_bytes_min = json.dumps(payload_min_template).encode("utf-8")
+    total_bits = (len(payload_bytes_min)) * 8
+
+    tx_duration_adaptive = total_bits / bps
+    slot_duration = tx_duration_adaptive +  + tx_duration
+    frame_duration = slot_duration * len(S.agents)
+
 frame_steps = int(frame_duration * fps_physics)
 
 # =================================
 # MAC
 # =================================
 
-MAC = TDMA_MAC(
+if mac_mode == "tdma":
+    MAC = TDMA_MAC(
+        ac_handle,
+        slot_duration=slot_duration,
+        frame_duration=frame_duration,
+        guard_time=guard_time
+    )
+
+elif mac_mode == "adaptive":
+    MAC = Adaptive_TDMA_MAC(
     ac_handle,
     slot_duration=slot_duration,
     frame_duration=frame_duration,
-    guard_time=guard_time
-)
+    leader_id=leader_id,
+    guard_time=guard_time,
+    K_select=K_select
+    )
+
+else:
+    raise ValueError(f"Unknown mac_mode: {mac_mode}")
 
 MAC.register_agents(S.agents.values())
 
@@ -245,7 +288,7 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
                 f"| norm={np.linalg.norm(err):6.3f}"
             )
 
-        print("\n--- MAC stats (TDMA) ---")
+        print(f"\n--- MAC stats ({mac_mode}) ---")
         print(
             f"TX={MAC.stats['tx']:3d} | "
             f"RX_OK={MAC.stats['rx_success']:3d} | "
@@ -253,6 +296,13 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
             f"COLL={MAC.stats['collisions']:3d} | "
             f"DENIED={MAC.stats['denied']:3d}"
         )
+
+        if hasattr(MAC, "active_schedule"):
+
+            if MAC.active_schedule is not None:
+                print(f"Schedule k={MAC.frame_id}: NAV -> {MAC.active_schedule}")
+            else:
+                print(f"Schedule k={MAC.frame_id}: TDMA fallback")
 
         frame_report = MAC.get_frame_report()
 

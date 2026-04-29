@@ -220,6 +220,10 @@ class EKFNavFilter(BaseNavFilter):
 
             if payload is None:
                 continue
+            if payload.get("type") != "nav":#(process only if nav payload present)
+                continue
+            if "pos" not in payload or "cov" not in payload or "body_vel" not in payload:
+                continue
             if "pos" not in payload or "cov" not in payload or "body_vel" not in payload:
                 continue
 

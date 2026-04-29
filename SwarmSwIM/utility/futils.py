@@ -8,12 +8,28 @@ def build_nav_payload(agent, tx_time):
     st = agent.nav_state
 
     return {
+        "type": "nav",
         "id": agent.name,
         "tx_time": tx_time,
         "pos": st.x[:3].tolist(),
         "heading": float(st.x[3]),
         "cov": np.diag(st.P[:3, :3]).tolist(),
         "body_vel": st.x[4:6].tolist()
+    }
+
+def build_min_payload(agent, tx_time, leader_id=None, proposal_frame=None, schedule=None):
+    nav_info = getattr(agent, "nav_info", {}) or {}
+    traceP = float(nav_info.get("traceP_pos", 1.0))
+    q_i = 1.0 / traceP if traceP > 0.0 else 0.0
+
+    return {
+        "type": "consensus",
+        "id": agent.name,
+        "tx_time": tx_time,
+        "q": q_i,
+        "leader_id": leader_id,
+        "proposal_frame": proposal_frame,
+        "schedule": schedule,
     }
 
 def log_coop_update_debug(nav, coop_update_debug_logs):
