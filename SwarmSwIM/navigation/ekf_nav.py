@@ -89,7 +89,7 @@ class EKFNavFilter(BaseNavFilter):
     # ==========================================================
 
     def _init_filter(self, agent):
-        pos_init_noise = self.rng.normal(
+        pos_noise = self.rng.normal(
             loc=0.0,
             scale=np.sqrt(np.diag(self.sigma_init_pos)),
             size=2
@@ -98,8 +98,8 @@ class EKFNavFilter(BaseNavFilter):
         vel0 = self._get_body_velocity_measurement(agent, None)
 
         x0 = np.array([
-            float(agent.pos[0]) + pos_init_noise[0],
-            float(agent.pos[1]) + pos_init_noise[1],
+            float(agent.pos[0]) + pos_noise[0],
+            float(agent.pos[1]) + pos_noise[1],
             float(agent.pos[2]),
             float(agent.psi),
             float(vel0[0]),
@@ -165,7 +165,12 @@ class EKFNavFilter(BaseNavFilter):
         self._apply_local_measurements(st, z_depth, z_psi, z_vel)
 
         if self._is_surface_agent(agent):
-            z_xy = np.array([float(agent.pos[0]), float(agent.pos[1])], dtype=float)
+            pos_noise = self.rng.normal(
+            loc=0.0,
+            scale=np.sqrt(np.diag(self.sigma_init_pos)),
+            size=2
+            )
+            z_xy = np.array([float(agent.pos[0])+pos_noise[0], float(agent.pos[1])+pos_noise[0]], dtype=float)
             H_xy = np.array([
                 [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
@@ -348,10 +353,11 @@ class EKFNavFilter(BaseNavFilter):
             -diff[2] / r_hat
         ]], dtype=float)
 
-        alpha_eff = 0.2 if sender_name in {"A04", "A02"} else self.alpha
+        alpha_eff = 0.2 if sender_name in self.surface_agents else self.alpha
+        R_coop_updates = 0.1 if sender_name in self.surface_agents else self.R_coop_updates
         R_sender = alpha_eff * float((H_j @ P_j_meas @ H_j.T)[0, 0])
         R_delay = float((self.sigma_rel_speed * staleness) ** 2)
-        R_eff = float(self.R_range + R_sender + R_delay + self.R_coop_updates)
+        R_eff = float(self.R_range + R_sender + R_delay + R_coop_updates)
         R_eff = max(R_eff, 1e-12)
 
         nu = float(z - r_hat)
