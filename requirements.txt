@@ -1,0 +1,5 @@
+numpy
+matplotlib
+fastapi
+uvicorn
+opencv-python

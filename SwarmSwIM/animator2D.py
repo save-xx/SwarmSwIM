@@ -8,14 +8,16 @@ import random
 THRESHOLD = 300
 
 class Plotter:
-    def __init__(self,simulator,SIZE=30,artistics=[]):
+    def __init__(self, simulator, fps=30, SIZE=30, artistics=[]):
         # load list of agents
         self.sim = simulator
+        self.fps = fps #rate animation update
         # Set plot axis NED coordinate system
         self.fig2, self.ax = plt.subplots()
         self.ax.set_xlim(-SIZE, SIZE)  # Set the x-axis limits
         self.ax.set_ylim(SIZE, -SIZE)  # Set the y-axis limits
         self.ax.axis('equal')
+        self.vehicle_size = SIZE * 0.01
         # Add background features, if any
         for art in artistics:
             self.ax.add_artist(art)
@@ -78,24 +80,28 @@ class Plotter:
             return  artist_list # self.tri_list + self.lines_list 
 
         # get interval for real-time
-        interval = max(1,int(self.sim.Dt*1000))
+        #interval = max(1,int(self.sim.Dt*1000))
+        interval = int(1000 / self.fps)
         #return self.lines_list #, p
         ani = FuncAnimation(self.fig2, update, frames=range(10000), interval=interval, blit=True) 
         
         if callback:
             ani.event_source.add_callback(callback)
+
+        plt.grid()
         plt.show()
 
     def calculate_triangle(self, agent):
+        s = self.vehicle_size
         sin = np.sin(np.deg2rad(agent.psi))
         cos = np.cos(np.deg2rad(agent.psi))
-        xg,yg = agent.pos[0],agent.pos[1]
+        xg, yg = agent.pos[0], agent.pos[1]
 
-        x1 = [xg +0.2*cos         , yg +0.2*sin       ]
-        x2 = [xg -0.2*cos -0.1*sin, yg+0.1*cos-0.2*sin]
-        x3 = [xg -0.2*cos +0.1*sin, yg-0.1*cos-0.2*sin]
-        return np.array([x1,x2,x3])
-        
+        x1 = [xg + s*cos, yg + s*sin]
+        x2 = [xg - s*cos - 0.5*s*sin, yg + 0.5*s*cos - s*sin]
+        x3 = [xg - s*cos + 0.5*s*sin, yg - 0.5*s*cos - s*sin]
+
+        return np.array([x1, x2, x3])
 
 
 if __name__ == "__main__":
