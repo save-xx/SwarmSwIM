@@ -4,7 +4,6 @@ import numpy as np
 
 from .base_nav import BaseNavFilter
 
-
 @dataclass
 class NavState:
     """
@@ -40,19 +39,21 @@ class EKFNavFilter(BaseNavFilter):
         R_depth=1e-6,
         R_heading_deg=4.0,
         R_body_vel_diag=np.array([0.003, 0.003]),
-        sigma_init_pos=np.array([0.25, 0.25]),
         R_range=0.01,
         R_coop_updates=0.5,
         alpha=1.0,
         min_range=1e-2,
 
         sigma_rel_speed=0.2,
+
+        surface_agents=("A04", "A02"),
+        sigma_gps_fix=np.array([0.25, 0.25]),
+        R_surface_pos_diag=(0.04, 0.04),
+
         history_length=1000,
         writeback=True,
         keep_history=True,
         rng_seed=50,
-        surface_agents=("A04", "A02"),
-        R_surface_pos_diag=(0.04, 0.04),
     ):
         super().__init__()
 
@@ -66,7 +67,7 @@ class EKFNavFilter(BaseNavFilter):
         self.R_coop_updates = float(R_coop_updates)
 
 
-        self.sigma_init_pos = np.diag(np.asarray(sigma_init_pos, dtype=float))
+        self.sigma_gps_fix = np.diag(np.asarray(sigma_gps_fix, dtype=float))
 
         self.alpha = float(alpha)
         self.min_range = float(min_range)
@@ -81,6 +82,13 @@ class EKFNavFilter(BaseNavFilter):
 
         self.rng = np.random.default_rng(rng_seed)
 
+        self.gps_noise = self.rng.normal(
+            loc=0.0,
+            scale=np.sqrt(np.diag(self.sigma_gps_fix)),
+            size=2
+        )
+
+
         self.coop_update_log = []
         self.nu = np.nan
 
@@ -89,17 +97,13 @@ class EKFNavFilter(BaseNavFilter):
     # ==========================================================
 
     def _init_filter(self, agent):
-        pos_noise = self.rng.normal(
-            loc=0.0,
-            scale=np.sqrt(np.diag(self.sigma_init_pos)),
-            size=2
-        )
+        
 
         vel0 = self._get_body_velocity_measurement(agent, None)
 
         x0 = np.array([
-            float(agent.pos[0]) + pos_noise[0],
-            float(agent.pos[1]) + pos_noise[1],
+            float(agent.pos[0]) + self.gps_noise[0],
+            float(agent.pos[1]) + self.gps_noise[1],
             float(agent.pos[2]),
             float(agent.psi),
             float(vel0[0]),
@@ -156,6 +160,7 @@ class EKFNavFilter(BaseNavFilter):
             self._trim_history(st)
 
     def update_local(self, agent, sim):
+
         st = self.filters[agent.name]
 
         z_depth = np.array([float(agent.measured_depth)], dtype=float)
@@ -163,27 +168,6 @@ class EKFNavFilter(BaseNavFilter):
         z_vel = self._get_body_velocity_measurement(agent, sim)
 
         self._apply_local_measurements(st, z_depth, z_psi, z_vel)
-
-        if self._is_surface_agent(agent):
-            pos_noise = self.rng.normal(
-            loc=0.0,
-            scale=np.sqrt(np.diag(self.sigma_init_pos)),
-            size=2
-            )
-            z_xy = np.array([float(agent.pos[0])+pos_noise[0], float(agent.pos[1])+pos_noise[0]], dtype=float)
-            H_xy = np.array([
-                [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-            ], dtype=float)
-
-            self._ekf_update_linear(
-                st,
-                z=z_xy,
-                h=st.x[0:2].copy(),
-                H=H_xy,
-                R=self.R_surface_pos,
-                angle_idx=None,
-            )
 
         st.last_local_update = float(sim.time)
         st.quality = float(np.trace(st.P[:3, :3]))
@@ -198,6 +182,39 @@ class EKFNavFilter(BaseNavFilter):
                 meas_heading=float(z_psi),
                 meas_body_vel=np.asarray(z_vel, dtype=float),
             )
+
+    def update_surface_position(self, agent, sim):
+        if not self._is_surface_agent(agent):
+            return
+
+        st = self.filters[agent.name]
+
+        pos_noise = self.rng.normal(
+            loc=0.0,
+            scale=np.sqrt(np.diag(self.sigma_gps_fix)),
+            size=2
+        )
+
+        z_xy = np.array([
+            float(agent.pos[0]) + pos_noise[0],
+            float(agent.pos[1]) + pos_noise[1],
+        ], dtype=float)
+
+        H_xy = np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        ], dtype=float)
+
+        self._ekf_update_linear(
+            st,
+            z=z_xy,
+            h=st.x[0:2].copy(),
+            H=H_xy,
+            R=self.R_surface_pos,
+            angle_idx=None,
+        )
+
+        st.quality = float(np.trace(st.P[:3, :3]))
 
     def process_cooperative(self, sim, delivered):
         for receiver_name, msg in delivered.items():

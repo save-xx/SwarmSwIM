@@ -23,13 +23,6 @@ if ranging:
 else:
     log_str = "no_range"
 
-# =================================
-# MAC mode selection
-# =================================
-
-mac_mode = "adaptive"          # "tdma" or "adaptive"
-leader_id = "A04"          # fixed leader for adaptive mode
-K_select = 2               # number of selected agents in adaptive mode
 
 def save_all_logs(nav_logs,coop_logs,coop_update_debug_logs):
     futils.save_csv(nav_logs, LOG_DIR / log_str /"nav_log.csv")
@@ -124,40 +117,17 @@ tx_duration = total_bits / bps
 slot_duration = tx_duration + guard_time
 frame_duration = slot_duration * len(S.agents)
 
-if mac_mode == "adaptive":
-    payload_bytes_min = json.dumps(payload_min_template).encode("utf-8")
-    total_bits = (len(payload_bytes_min)) * 8
-
-    tx_duration_adaptive = total_bits / bps
-    slot_duration = tx_duration_adaptive +  + tx_duration
-    frame_duration = slot_duration * len(S.agents)
-
 frame_steps = int(frame_duration * fps_physics)
 
 # =================================
 # MAC
 # =================================
-
-if mac_mode == "tdma":
-    MAC = TDMA_MAC(
-        ac_handle,
-        slot_duration=slot_duration,
-        frame_duration=frame_duration,
-        guard_time=guard_time
-    )
-
-elif mac_mode == "adaptive":
-    MAC = Adaptive_TDMA_MAC(
+MAC = TDMA_MAC(
     ac_handle,
     slot_duration=slot_duration,
     frame_duration=frame_duration,
-    leader_id=leader_id,
-    guard_time=guard_time,
-    K_select=K_select
-    )
-
-else:
-    raise ValueError(f"Unknown mac_mode: {mac_mode}")
+    guard_time=guard_time
+)
 
 MAC.register_agents(S.agents.values())
 
@@ -287,22 +257,6 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
                 f"ez={err[2]:7.3f}  "
                 f"| norm={np.linalg.norm(err):6.3f}"
             )
-
-        print(f"\n--- MAC stats ({mac_mode}) ---")
-        print(
-            f"TX={MAC.stats['tx']:3d} | "
-            f"RX_OK={MAC.stats['rx_success']:3d} | "
-            f"RX_LOST={MAC.stats['rx_lost']:3d} | "
-            f"COLL={MAC.stats['collisions']:3d} | "
-            f"DENIED={MAC.stats['denied']:3d}"
-        )
-
-        if hasattr(MAC, "active_schedule"):
-
-            if MAC.active_schedule is not None:
-                print(f"Schedule k={MAC.frame_id}: NAV -> {MAC.active_schedule}")
-            else:
-                print(f"Schedule k={MAC.frame_id}: TDMA fallback")
 
         frame_report = MAC.get_frame_report()
 

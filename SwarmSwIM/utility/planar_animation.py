@@ -95,6 +95,20 @@ class Visualizer2D:
         active_agent = None
         if self.mac and getattr(self.mac, "agents_order", None):
             t_frame = self.sim.time % self.mac.frame_duration
+            slot_idx = int(t_frame // self.mac.nav_duration)
+            if 0 <= slot_idx < len(self.mac.agents_order):
+                active_agent = self.mac.agents_order[slot_idx]
+
+        for name, agent in self.sim.agents.items():
+            self._update_triangle(agent, is_active=(name == active_agent))
+            self._update_curve(agent)
+
+        self._update_edges()
+
+    def update_visuals_TDMA(self):
+        active_agent = None
+        if self.mac and getattr(self.mac, "agents_order", None):
+            t_frame = self.sim.time % self.mac.frame_duration
             slot_idx = int(t_frame // self.mac.slot_duration)
             if 0 <= slot_idx < len(self.mac.agents_order):
                 active_agent = self.mac.agents_order[slot_idx]

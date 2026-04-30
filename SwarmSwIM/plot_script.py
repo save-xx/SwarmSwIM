@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # "with_ranging"
 # "no_range"
 
-ranging = False
+ranging = True
 if ranging:
     log_str = "with_ranging"
 else:
