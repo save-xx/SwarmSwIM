@@ -6,6 +6,7 @@ from utility import futils
 from mac.adaptive_mac import Adaptive_TDMA_MAC
 from sensors.acoustic_ranging import AcousticRanging
 from navigation.ekf_nav import EKFNavFilter
+from navigation.fg_nav import FGNavFilter
 
 import json
 from pathlib import Path
@@ -130,7 +131,9 @@ MAC.register_agents(S.agents.values())
 # Navigation filters
 # =================================
 
-Nav = EKFNavFilter(writeback=True)
+#Nav = EKFNavFilter(writeback=True)
+Nav = FGNavFilter(writeback=True)
+
 Nav.register_agents(S.agents.values())
 
 for agent in S.agents.values():
@@ -171,7 +174,7 @@ print_bootstrap = True
 # Navigation update rates
 # =================================
 
-local_update_hz = 10.0
+local_update_hz = 5.0
 gps_update_hz = 1.0
 
 local_update_dt = 1.0 / local_update_hz
