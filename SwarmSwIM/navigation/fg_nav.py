@@ -1,7 +1,6 @@
-import copy
-from dataclasses import dataclass, field
 import numpy as np
 import casadi
+from dataclasses import dataclass, field
 
 from .base_nav import BaseNavFilter
 
@@ -25,35 +24,29 @@ class NavState:
     last_coop_meas_time: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
 
-    # FG-specific sliding window of recent cooperative events
-    fg_window: list = field(default_factory=list)
+    # FG-specific buffers
+    fg_range_window: list = field(default_factory=list)
+    fg_gps_window: list = field(default_factory=list)
 
 
 class FGNavFilter(BaseNavFilter):
     """
-    Receiver-local sliding-window factor graph navigation filter for SwarmSwIM.
+    Receiver-local sliding-window factor graph navigation filter.
 
-    Design choices
-    --------------
-    - Keeps the same external NavState/state vector as the EKF baseline:
-        x = [x, y, z, psi, u, v]^T
-    - Keeps predict() and local updates very close to the EKF baseline
-    - Replaces cooperative EKF range updates with a local factor-graph solve
-    - Solves only for 2D receiver positions [x, y] over the last M cooperative events
-    - Triggered only when a valid cooperative nav packet is received
+    Current graph
+    -------------
+    Per agent, over a recent time horizon:
+    - one 2D node [x, y] per unique event time
+    - prior on oldest node
+    - DR continuity factors between consecutive nodes
+    - range factors at range-event times
+    - GPS XY factors at GPS-event times
 
-    Current FG window factors
-    -------------------------
-    For the receiver only, over the last M cooperative events:
-    - prior factor on oldest node
-    - DR continuity factors between consecutive receiver nodes
-    - range factors from each event to sender payload position
-
-    Notes
-    -----
-    - This first version updates only st.x[0:2] from the FG result
-    - st.P is still maintained by prediction/local linear updates; no FG covariance recovery yet
-    - sender heading/body velocity/covariance are stored in events for later extensions
+    Trigger
+    -------
+    Solve when:
+    - a new valid cooperative range event is received
+    - a new GPS fix is added
     """
 
     def __init__(
@@ -73,10 +66,15 @@ class FGNavFilter(BaseNavFilter):
         keep_history=True,
         rng_seed=50,
 
-        window_size=10,
+        fg_time_horizon=30.0,
+        max_range_events=10,
+        max_gps_events=10,
+        min_fg_nodes=2,
+
         fg_sigma_prior=0.5,
         fg_sigma_dr=0.5,
         fg_sigma_range=0.3,
+        fg_sigma_gps=0.2,
         fg_robust_delta=2.0,
         fg_use_robust=True,
     ):
@@ -90,18 +88,23 @@ class FGNavFilter(BaseNavFilter):
         self.R_body_vel = np.diag(np.asarray(R_body_vel_diag, dtype=float))
 
         self.var_gps_fix = np.diag(np.asarray(var_gps_fix, dtype=float))
+        self.R_surface_pos = np.diag(np.asarray(R_surface_pos_diag, dtype=float))
 
         self.history_length = int(history_length)
         self.writeback = bool(writeback)
         self.keep_history = bool(keep_history)
 
         self.surface_agents = set(surface_agents)
-        self.R_surface_pos = np.diag(np.asarray(R_surface_pos_diag, dtype=float))
 
-        self.window_size = int(window_size)
+        self.fg_time_horizon = float(fg_time_horizon)
+        self.max_range_events = int(max_range_events)
+        self.max_gps_events = int(max_gps_events)
+        self.min_fg_nodes = int(min_fg_nodes)
+
         self.fg_sigma_prior = float(fg_sigma_prior)
         self.fg_sigma_dr = float(fg_sigma_dr)
         self.fg_sigma_range = float(fg_sigma_range)
+        self.fg_sigma_gps = float(fg_sigma_gps)
         self.fg_robust_delta = float(fg_robust_delta)
         self.fg_use_robust = bool(fg_use_robust)
 
@@ -164,7 +167,6 @@ class FGNavFilter(BaseNavFilter):
 
         F = self._transition_jacobian(st.x, dt)
         x_pred = self._propagate_state(st.x, dt)
-
         Q = np.diag(self.Q_diag * dt)
 
         st.x = x_pred
@@ -204,7 +206,17 @@ class FGNavFilter(BaseNavFilter):
                 meas_body_vel=np.asarray(z_vel, dtype=float),
             )
 
+        # GPS handled in FG
+        gps_added = self._maybe_add_gps_event(agent, sim)
+        if gps_added:
+            result = self._solve_agent_fg(st, float(sim.time))
+            self._apply_fg_solution(st, result, sim)
+
     def update_surface_position(self, agent, sim):
+        """
+        Kept for completeness/debug, but not used in the active path.
+        GPS is handled inside the FG.
+        """
         if not self._is_surface_agent(agent):
             return
 
@@ -268,7 +280,7 @@ class FGNavFilter(BaseNavFilter):
             if t_meas <= last_t_meas:
                 continue
 
-            event = self._build_fg_event(
+            event = self._build_range_event(
                 receiver=receiver,
                 sender_name=sender_name,
                 payload=payload,
@@ -279,12 +291,10 @@ class FGNavFilter(BaseNavFilter):
             if event is None:
                 continue
 
-            self._append_fg_event(st, event)
+            self._append_range_event(st, event)
 
-            result = None
-            if len(st.fg_window) >= 2:
-                result = self._solve_fg_window(st)
-                self._apply_fg_solution(st, result, sim)
+            result = self._solve_agent_fg(st, float(sim.time))
+            self._apply_fg_solution(st, result, sim)
 
             st.last_coop_meas_time[sender_name] = t_meas
 
@@ -296,7 +306,8 @@ class FGNavFilter(BaseNavFilter):
                 "range": float(event["z_range"]),
                 "t_tx_payload": float(event["t_tx"]),
                 "t_meas": float(event["t_meas"]),
-                "window_size": int(len(st.fg_window)),
+                "n_range": int(len(st.fg_range_window)),
+                "n_gps": int(len(st.fg_gps_window)),
                 "receiver_x_post": float(st.x[0]),
                 "receiver_y_post": float(st.x[1]),
                 "traceP_post": float(np.trace(st.P[:3, :3])),
@@ -307,10 +318,45 @@ class FGNavFilter(BaseNavFilter):
             self._writeback_all(sim)
 
     # ==========================================================
-    # FG cooperative helpers
+    # FG event management
     # ==========================================================
 
-    def _build_fg_event(self, receiver, sender_name, payload, meas, st, sim):
+    def _maybe_add_gps_event(self, agent, sim):
+        if not self._is_surface_agent(agent):
+            return False
+
+        st = self.filters[agent.name]
+
+        gps_noise = self.rng.normal(
+            loc=0.0,
+            scale=np.sqrt(np.diag(self.var_gps_fix)),
+            size=2
+        )
+
+        z_xy = np.array([
+            float(agent.pos[0]) + gps_noise[0],
+            float(agent.pos[1]) + gps_noise[1],
+        ], dtype=float)
+
+        if not np.all(np.isfinite(z_xy)):
+            return False
+
+        event = {
+            "type": "gps",
+            "t_meas": float(sim.time),
+            "gps_xy": z_xy.copy(),
+            "receiver_dr_xy": st.x[:2].copy(),
+        }
+
+        # avoid duplicates at same timestamp
+        if st.fg_gps_window:
+            if abs(float(st.fg_gps_window[-1]["t_meas"]) - float(sim.time)) < 1e-12:
+                return False
+
+        self._append_gps_event(st, event)
+        return True
+
+    def _build_range_event(self, receiver, sender_name, payload, meas, st, sim):
         if payload is None:
             return None
         if payload.get("type") != "nav":
@@ -352,37 +398,115 @@ class FGNavFilter(BaseNavFilter):
         if not np.isfinite(z_i):
             return None
 
-        p_i_ref = st.x[:2].copy()
-
         event = {
+            "type": "range",
             "t_meas": t_meas,
             "t_tx": t_tx,
             "t_now": t_now,
-
             "sender": sender_name,
             "z_range": z_range,
-
             "sender_pos": p_j.copy(),
             "sender_heading": psi_j,
             "sender_body_vel": v_j.copy(),
             "sender_cov": P_j.copy(),
-
             "receiver_depth": z_i,
-            "receiver_dr_xy": p_i_ref.copy(),
+            "receiver_dr_xy": st.x[:2].copy(),
         }
-
         return event
 
-    def _append_fg_event(self, st, event):
-        st.fg_window.append(event)
-        if len(st.fg_window) > self.window_size:
-            st.fg_window[:] = st.fg_window[-self.window_size:]
+    def _append_range_event(self, st, event):
+        st.fg_range_window.append(event)
+        if len(st.fg_range_window) > self.max_range_events:
+            st.fg_range_window[:] = st.fg_range_window[-self.max_range_events:]
 
-    def _solve_fg_window(self, st):
-        events = st.fg_window
-        N = len(events)
+    def _append_gps_event(self, st, event):
+        st.fg_gps_window.append(event)
+        if len(st.fg_gps_window) > self.max_gps_events:
+            st.fg_gps_window[:] = st.fg_gps_window[-self.max_gps_events:]
 
-        if N < 2:
+    def _select_recent_events(self, st, t_now):
+        t_min = float(t_now) - self.fg_time_horizon
+
+        range_events = [
+            ev for ev in st.fg_range_window
+            if float(ev["t_meas"]) >= t_min
+        ]
+        gps_events = [
+            ev for ev in st.fg_gps_window
+            if float(ev["t_meas"]) >= t_min
+        ]
+
+        if len(range_events) > self.max_range_events:
+            range_events = range_events[-self.max_range_events:]
+        if len(gps_events) > self.max_gps_events:
+            gps_events = gps_events[-self.max_gps_events:]
+
+        return range_events, gps_events
+
+    def _build_fg_nodes_and_maps(self, range_events, gps_events):
+        """
+        Returns:
+        - node_times: sorted unique timestamps
+        - time_to_idx: dict
+        - range_by_idx: dict[idx] -> list of range events
+        - gps_by_idx: dict[idx] -> list of gps events
+        """
+        all_times = []
+        for ev in range_events:
+            all_times.append(float(ev["t_meas"]))
+        for ev in gps_events:
+            all_times.append(float(ev["t_meas"]))
+
+        node_times = sorted(set(all_times))
+        time_to_idx = {t: k for k, t in enumerate(node_times)}
+
+        range_by_idx = {k: [] for k in range(len(node_times))}
+        gps_by_idx = {k: [] for k in range(len(node_times))}
+
+        for ev in range_events:
+            range_by_idx[time_to_idx[float(ev["t_meas"])]] .append(ev)
+        for ev in gps_events:
+            gps_by_idx[time_to_idx[float(ev["t_meas"])]] .append(ev)
+
+        return node_times, time_to_idx, range_by_idx, gps_by_idx
+
+    def _reference_xy_at_time(self, st, t_query):
+        """
+        Simple reference extraction from history.
+        Fallback: current state.
+        """
+        best = None
+        best_dt = np.inf
+
+        for entry in reversed(st.history):
+            t_entry = float(entry.get("t", np.inf))
+            dt = abs(t_entry - float(t_query))
+            if dt < best_dt:
+                best_dt = dt
+                best = entry
+            if dt < 1e-9:
+                break
+
+        if best is not None and "x" in best:
+            x = np.asarray(best["x"], dtype=float).reshape(-1)
+            if x.size >= 2 and np.all(np.isfinite(x[:2])):
+                return x[:2].copy()
+
+        return st.x[:2].copy()
+
+    # ==========================================================
+    # FG solve
+    # ==========================================================
+
+    def _solve_agent_fg(self, st, t_now):
+        range_events, gps_events = self._select_recent_events(st, t_now)
+
+        node_times, _, range_by_idx, gps_by_idx = self._build_fg_nodes_and_maps(
+            range_events, gps_events
+        )
+
+        N = len(node_times)
+        if N < self.min_fg_nodes:
             return None
 
         X = casadi.SX.sym("X_fg", 2 * N)
@@ -395,47 +519,54 @@ class FGNavFilter(BaseNavFilter):
 
         J = casadi.SX(0)
 
+        # reference XY for each node time
+        ref_xy = [self._reference_xy_at_time(st, t) for t in node_times]
+
         # prior on oldest node
-        p0_ref = np.asarray(events[0]["receiver_dr_xy"], dtype=float).reshape(2)
-        r0 = (xy_k(0) - p0_ref) / float(self.fg_sigma_prior)
+        r0 = (xy_k(0) - ref_xy[0]) / float(self.fg_sigma_prior)
         J += casadi.dot(r0, r0)
 
-        # DR continuity
+        # DR continuity between consecutive nodes
         for k in range(1, N):
-            p_prev_ref = np.asarray(events[k - 1]["receiver_dr_xy"], dtype=float).reshape(2)
-            p_curr_ref = np.asarray(events[k]["receiver_dr_xy"], dtype=float).reshape(2)
-
-            delta_dr = p_curr_ref - p_prev_ref
+            delta_dr = ref_xy[k] - ref_xy[k - 1]
             r_dr = (xy_k(k) - xy_k(k - 1) - delta_dr) / float(self.fg_sigma_dr)
             J += casadi.dot(r_dr, r_dr)
 
-        # range factor
+        # range factors
         for k in range(N):
-            ev = events[k]
+            for ev in range_by_idx[k]:
+                p_j = np.asarray(ev["sender_pos"], dtype=float).reshape(3)
+                z_i = float(ev["receiver_depth"])
+                z_j = float(p_j[2])
+                z_range = float(ev["z_range"])
 
-            p_j = np.asarray(ev["sender_pos"], dtype=float).reshape(3)
-            z_i = float(ev["receiver_depth"])
-            z_j = float(p_j[2])
-            z_range = float(ev["z_range"])
+                if not np.isfinite(z_i) or not np.isfinite(z_j) or not np.isfinite(z_range):
+                    continue
 
-            if not np.isfinite(z_i) or not np.isfinite(z_j) or not np.isfinite(z_range):
-                continue
+                dx = xy_k(k)[0] - float(p_j[0])
+                dy = xy_k(k)[1] - float(p_j[1])
+                dz = float(z_i - z_j)
 
-            dx = xy_k(k)[0] - float(p_j[0])
-            dy = xy_k(k)[1] - float(p_j[1])
-            dz = float(z_i - z_j)
+                r_hat = casadi.sqrt(dx * dx + dy * dy + dz * dz)
+                r = (r_hat - z_range) / float(self.fg_sigma_range)
 
-            r_hat = casadi.sqrt(dx * dx + dy * dy + dz * dz)
-            r = (r_hat - z_range) / float(self.fg_sigma_range)
+                if self.fg_use_robust:
+                    J += pseudo_huber(r, float(self.fg_robust_delta))
+                else:
+                    J += r * r
 
-            if self.fg_use_robust:
-                J += pseudo_huber(r, float(self.fg_robust_delta))
-            else:
-                J += r * r
+        # GPS factors
+        for k in range(N):
+            for ev in gps_by_idx[k]:
+                z_xy = np.asarray(ev["gps_xy"], dtype=float).reshape(2)
+                if not np.all(np.isfinite(z_xy)):
+                    continue
+
+                r_gps = (xy_k(k) - z_xy) / float(self.fg_sigma_gps)
+                J += casadi.dot(r_gps, r_gps)
 
         x0 = []
-        for ev in events:
-            p_ref = np.asarray(ev["receiver_dr_xy"], dtype=float).reshape(2)
+        for p_ref in ref_xy:
             x0.extend([float(p_ref[0]), float(p_ref[1])])
 
         nlp = {"x": X, "f": J}
@@ -459,6 +590,7 @@ class FGNavFilter(BaseNavFilter):
                 "xy_last": None,
                 "xy_all": None,
                 "cost": np.inf,
+                "node_times": node_times,
             }
 
         xy_all = []
@@ -470,6 +602,7 @@ class FGNavFilter(BaseNavFilter):
             "xy_last": xy_all[-1].copy(),
             "xy_all": xy_all,
             "cost": cost,
+            "node_times": node_times,
         }
 
     def _apply_fg_solution(self, st, result, sim):
@@ -512,8 +645,7 @@ class FGNavFilter(BaseNavFilter):
         return agent.name in self.surface_agents
 
     def _get_body_velocity_measurement(self, agent, sim):
-        body_vel = self._get_body_velocity_from_agent(agent, sim)
-        return body_vel
+        return self._get_body_velocity_from_agent(agent, sim)
 
     def _get_body_velocity_from_agent(self, agent, sim):
         if hasattr(agent, "emulated_velocities"):
@@ -654,6 +786,8 @@ class FGNavFilter(BaseNavFilter):
                 "quality": float(st.quality),
                 "t": float(st.t),
                 "fg_cost": float(self.fg_last_cost) if np.isfinite(self.fg_last_cost) else np.nan,
+                "n_fg_range": int(len(st.fg_range_window)),
+                "n_fg_gps": int(len(st.fg_gps_window)),
             }
 
     # ==========================================================
