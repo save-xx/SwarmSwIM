@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-
+import time
 
 class BaseNavFilter(ABC):
     """
@@ -120,6 +120,7 @@ class BaseNavFilter(ABC):
         dict
             Internal navigation states dictionary.
         """
+        start = time.time()
         for agent in sim.agents.values():
             self.predict(agent, sim)
 
@@ -130,6 +131,8 @@ class BaseNavFilter(ABC):
         self.process_cooperative(sim, delivered)
 
         self.post_step(sim, delivered)
+        stop = time.time()
+        print('process time',stop - start)
 
         return self.filters
 

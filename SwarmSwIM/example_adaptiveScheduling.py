@@ -47,7 +47,7 @@ ws_radius = 200
 fps_physics = 30
 fps_render = 30
 bps = 450
-PDR = 1.0
+PDR = 0.7
 c = 1500
 
 payload_nav_template = {
@@ -132,7 +132,7 @@ MAC.register_agents(S.agents.values())
 # =================================
 
 #Nav = EKFNavFilter(writeback=True)
-Nav = FGNavFilter(writeback=True)
+Nav = FGNavFilter()
 
 Nav.register_agents(S.agents.values())
 
