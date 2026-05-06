@@ -18,7 +18,7 @@ ranging = True
 log_str = "with_ranging" if ranging else "no_range"
 
 leader_id = "A04"
-K_select = 2
+K_select = 4
 
 
 def save_all_logs(nav_logs, coop_logs, coop_update_debug_logs):
@@ -131,8 +131,8 @@ MAC.register_agents(S.agents.values())
 # Navigation filters
 # =================================
 
-#Nav = EKFNavFilter(writeback=True)
-Nav = FGNavFilter()
+Nav = EKFNavFilter(writeback=True)
+#Nav = FGNavFilter(writeback=True)
 
 Nav.register_agents(S.agents.values())
 
@@ -182,6 +182,8 @@ gps_update_dt = 1.0 / gps_update_hz
 
 next_local_update_time = 0.0
 next_gps_update_time = 0.0
+
+
 # =================================
 # Simulation callback
 # =================================
@@ -241,7 +243,8 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
         Nav.predict(agent, S)
 
     # Cooperative every cycle
-    Nav.process_cooperative(S, delivered)
+    if ranging:
+        Nav.process_cooperative(S, delivered)
 
     # Common local updates at 10 Hz
     if S.time + 1e-9 >= next_local_update_time:
@@ -254,6 +257,8 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
         for agent in S.agents.values():
             Nav.update_surface_position(agent, S)
         next_gps_update_time += gps_update_dt
+
+    Nav.surface_agents
 
     # =================================
     # Logging

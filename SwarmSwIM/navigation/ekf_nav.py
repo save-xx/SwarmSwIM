@@ -241,8 +241,6 @@ class EKFNavFilter(BaseNavFilter):
                 continue
             if "pos" not in payload or "cov" not in payload or "body_vel" not in payload:
                 continue
-            if "pos" not in payload or "cov" not in payload or "body_vel" not in payload:
-                continue
 
             t_meas = meas.get("t_meas", None)
             if t_meas is None:

@@ -117,22 +117,21 @@ class FGNavFilter(BaseNavFilter):
         if dt <= 0.0:
             return
 
-        x = st.x.copy()
+        x_dr = st.history[-1]["x"].copy() if st.history else st.x.copy()
 
-        psi = float(x[3])
-        u = float(x[4])
-        v = float(x[5])
+        psi = float(x_dr[3])
+        u = float(x_dr[4])
+        v = float(x_dr[5])
 
         vel_ned = self._body_to_ned_2d(np.array([u, v]), psi)
 
-        x[0] += vel_ned[0] * dt
-        x[1] += vel_ned[1] * dt
-        x[3] = self._wrap_deg(x[3])
+        x_dr[0] += vel_ned[0] * dt
+        x_dr[1] += vel_ned[1] * dt
+        x_dr[3] = self._wrap_deg(x_dr[3])
 
-        st.x = x
         st.t = float(sim.time)
 
-        self._append_history_snapshot(st, float(sim.time), st.x)
+        self._append_history_snapshot(st, float(sim.time), x_dr)
 
     def update_local(self, agent, sim):
         st = self.filters[agent.name]
@@ -141,14 +140,15 @@ class FGNavFilter(BaseNavFilter):
         z_psi = float(agent.measured_heading)
         z_vel = self._get_body_velocity_measurement(agent, sim)
 
-        st.x[2] = z_depth
-        st.x[3] = self._wrap_deg(z_psi)
-        st.x[4:6] = np.asarray(z_vel, dtype=float).reshape(2)
+        x_ref = st.history[-1]["x"].copy() if st.history else st.x.copy()
+        x_ref[2] = z_depth
+        x_ref[3] = self._wrap_deg(z_psi)
+        x_ref[4:6] = np.asarray(z_vel, dtype=float).reshape(2)
 
         st.last_local_update = float(sim.time)
-        st.quality = float(np.trace(st.P[:3, :3]))
+        st.t = float(sim.time)
 
-        self._append_history_snapshot(st, float(sim.time), st.x)
+        self._append_history_snapshot(st, float(sim.time), x_ref)
 
     # ==========================================================
     # GPS
@@ -475,7 +475,7 @@ class FGNavFilter(BaseNavFilter):
         st.quality = float(np.trace(st.P[:3, :3]))
         self.fg_last_cost = float(result.get("cost", np.nan))
 
-        self._append_history_snapshot(st, float(sim.time), st.x)
+        #self._append_history_snapshot(st, float(sim.time), st.x)
 
     def _select_recent_events(self, st, t_now):
         t_min = float(t_now) - self.fg_time_horizon
