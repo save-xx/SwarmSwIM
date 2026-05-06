@@ -23,6 +23,10 @@ class NavState:
     fg_range_window: list = field(default_factory=list)
     fg_gps_window: list = field(default_factory=list)
 
+    fg_last_solution: dict = field(default_factory=dict)
+    fg_last_status: str = ""
+    fg_last_cost: float = np.nan
+
 
 class FGNavFilter(BaseNavFilter):
 
@@ -39,14 +43,14 @@ class FGNavFilter(BaseNavFilter):
         writeback=True,
         keep_history=True,
         rng_seed=50,
-        fg_time_horizon=30.0,
-        max_range_events=200,
-        max_gps_events=200,
+        fg_time_horizon=10.0,
+        max_range_events=2000000,
+        max_gps_events=20000000,
         min_fg_nodes=2,
         fg_sigma_prior=0.5,
-        fg_sigma_dr=0.5,
-        fg_sigma_range=0.3,
-        fg_sigma_gps=0.2,
+        fg_sigma_v=0.1,
+        fg_sigma_range=0.1,
+        fg_sigma_gps=0.5,
     ):
         super().__init__()
 
@@ -70,7 +74,7 @@ class FGNavFilter(BaseNavFilter):
         self.min_fg_nodes = int(min_fg_nodes)
 
         self.fg_sigma_prior = float(fg_sigma_prior)
-        self.fg_sigma_dr = float(fg_sigma_dr)
+        self.fg_sigma_v = float(fg_sigma_v)
         self.fg_sigma_range = float(fg_sigma_range)
         self.fg_sigma_gps = float(fg_sigma_gps)
 
@@ -307,23 +311,19 @@ class FGNavFilter(BaseNavFilter):
         if not use_gps:
             gps_events = []
 
-        times = sorted(
-            set([ev["t"] for ev in range_events] + [ev["t"] for ev in gps_events])
-        )
-
-        if len(times) == 0:
-            return None
-
         t_now = float(t_now)
-        if abs(times[-1] - t_now) > 1e-9:
-            times.append(t_now)
 
-        times = sorted(times)
+        times = self._build_node_times(
+            st=st,
+            t_now=t_now,
+            range_events=range_events,
+            gps_events=gps_events,
+        )
 
         if len(times) < self.min_fg_nodes:
             return None
 
-        time_to_idx = {t: k for k, t in enumerate(times)}
+        #time_to_idx = {t: k for k, t in enumerate(times)}
         N = len(times)
 
         X = casadi.SX.sym("X", 2 * N)
@@ -333,9 +333,6 @@ class FGNavFilter(BaseNavFilter):
 
         J = casadi.SX(0)
 
-        # =========================
-        # HARD CONSTRAINTS
-        # =========================
         g = []
         lbg = []
         ubg = []
@@ -345,20 +342,14 @@ class FGNavFilter(BaseNavFilter):
 
         ref = [self._reference_xy_at_time(st, t) for t in times]
 
-        # =========================
-        # PRIOR (unchanged)
-        # =========================
-        if use_gps and len(gps_events) > 0:
-            prior_xy = ref[0]
-        else:
-            prior_xy = st.x0_xy
+        # Keep the original initial-position anchor.
+        # This is not a moving anchor at the start of the current window.
+        prior_xy = st.x0_xy.copy()
 
         r0 = (xk(0) - prior_xy) / self.fg_sigma_prior
         J += casadi.dot(r0, r0)
 
-        # =========================
-        # VELOCITY / DR + constraint
-        # =========================
+        # Velocity-integration residual + max-displacement constraint
         for k in range(1, N):
             dt = max(1e-9, float(times[k] - times[k - 1]))
 
@@ -370,20 +361,21 @@ class FGNavFilter(BaseNavFilter):
 
             step = xk(k) - xk(k - 1)
 
-            r = (step - delta_dr) / (self.fg_sigma_dr * dt)
+            r = (step - delta_dr) / (self.fg_sigma_v * dt)
             J += casadi.dot(r, r)
 
-            # HARD constraint: ||step|| <= v_max * dt
             step_norm = casadi.sqrt(casadi.dot(step, step) + 1e-12)
+
+            # Hard constraint:
+            # ||x_k - x_{k-1}|| <= v_max * dt
             g.append(step_norm - v_max * dt)
             lbg.append(-casadi.inf)
             ubg.append(0.0)
 
-        # =========================
-        # RANGE + constraint
-        # =========================
+        # Range residual + minimum-distance constraint
         for ev in range_events:
-            k = time_to_idx[ev["t"]]
+            #k = time_to_idx[ev["t"]]
+            k = self._nearest_time_index(times, ev["t"])
             p_j = self._sender_xy_at_meas(ev)
 
             dx = xk(k)[0] - float(p_j[0])
@@ -394,31 +386,22 @@ class FGNavFilter(BaseNavFilter):
             r = (dist - float(ev["z"])) / self.fg_sigma_range
             J += r * r
 
-            # HARD constraint: ||x_i - x_j|| >= d_min
+            # Hard constraint:
+            # ||x_i - x_j|| >= d_min
             g.append(dist - d_min)
             lbg.append(0.0)
             ubg.append(casadi.inf)
 
-        # =========================
-        # GPS residual (unchanged)
-        # =========================
+        # Absolute GPS fix residuals
         for ev in gps_events:
-            k = time_to_idx[ev["t"]]
+            k = self._nearest_time_index(times, ev["t"])
             z = np.asarray(ev["z"], dtype=float).reshape(2)
 
             r = (xk(k) - z) / self.fg_sigma_gps
             J += casadi.dot(r, r)
 
-        # =========================
-        # INITIAL GUESS (unchanged)
-        # =========================
-        x0 = []
-        for p in ref:
-            x0.extend([float(p[0]), float(p[1])])
+        x0 = self._build_initial_guess(st, times, ref)
 
-        # =========================
-        # SOLVER
-        # =========================
         try:
             nlp = {
                 "x": X,
@@ -427,7 +410,7 @@ class FGNavFilter(BaseNavFilter):
             }
 
             solver = casadi.nlpsol(
-                f"fg_solver_{id(st)}_{N}",
+                f"fg_solver_{id(st)}_{N}_{len(st.fg_range_window)}_{len(st.fg_gps_window)}",
                 "ipopt",
                 nlp,
                 {
@@ -444,20 +427,35 @@ class FGNavFilter(BaseNavFilter):
                 ubg=ubg,
             )
 
+            stats = solver.stats()
+            success = bool(stats.get("success", True))
+            status = str(stats.get("return_status", ""))
+
             x_opt = np.asarray(sol["x"].full()).reshape(-1)
             cost = float(sol["f"])
 
-        except Exception:
+        except Exception as exc:
             return {
                 "success": False,
                 "xy_last": None,
+                "xy_all": None,
+                "node_times": times,
                 "cost": np.inf,
+                "status": str(exc),
             }
 
+        xy_all = [
+            x_opt[2 * k: 2 * k + 2].copy()
+            for k in range(N)
+        ]
+
         return {
-            "success": True,
-            "xy_last": x_opt[-2:].copy(),
+            "success": success,
+            "xy_last": xy_all[-1].copy(),
+            "xy_all": xy_all,
+            "node_times": times,
             "cost": cost,
+            "status": status,
         }
 
     def _apply_fg_solution(self, st, result, sim):
@@ -473,7 +471,19 @@ class FGNavFilter(BaseNavFilter):
         st.t = float(sim.time)
         st.last_coop_update = float(sim.time)
         st.quality = float(np.trace(st.P[:3, :3]))
-        self.fg_last_cost = float(result.get("cost", np.nan))
+
+        st.fg_last_solution = {
+            "node_times": [float(t) for t in result["node_times"]],
+            "xy_all": [
+                np.asarray(xy, dtype=float).reshape(2).copy()
+                for xy in result["xy_all"]
+            ],
+        }
+
+        st.fg_last_cost = float(result.get("cost", np.nan))
+        st.fg_last_status = str(result.get("status", ""))
+
+        self.fg_last_cost = st.fg_last_cost
 
         self._append_history_snapshot(st, float(sim.time), st.x)
 
@@ -498,6 +508,89 @@ class FGNavFilter(BaseNavFilter):
 
         return range_events, gps_events
 
+    def _build_node_times(self, st, t_now, range_events, gps_events):
+        """
+        Sliding-window node times.
+
+        Includes:
+        - true initial anchor time 0.0 when still inside the horizon;
+        - otherwise the window start time;
+        - all range-event times;
+        - all GPS-event times;
+        - current time.
+        """
+        t_now = float(t_now)
+        t_start = max(0.0, t_now - self.fg_time_horizon)
+
+        times = [t_start, t_now]
+
+        for ev in range_events:
+            times.append(float(ev["t"]))
+
+        for ev in gps_events:
+            times.append(float(ev["t"]))
+
+        return self._unique_sorted_times(times)
+
+    @staticmethod
+    def _unique_sorted_times(times, tol=1e-9):
+        out = []
+
+        for t in sorted(float(v) for v in times if np.isfinite(float(v))):
+            if not out or abs(t - out[-1]) > tol:
+                out.append(t)
+
+        return out
+
+    def _build_initial_guess(self, st, times, ref):
+        """
+        Warm start:
+        1. interpolate previous optimized FG trajectory if available;
+        2. otherwise fall back to recursive DR/history reference.
+        """
+        x0 = []
+        prev = st.fg_last_solution if st.fg_last_solution else None
+
+        for k, t in enumerate(times):
+            xy = None
+
+            if prev:
+                xy = self._interpolate_solution(prev, float(t))
+
+            if xy is None:
+                xy = np.asarray(ref[k], dtype=float).reshape(2)
+
+            x0.extend([float(xy[0]), float(xy[1])])
+
+        return np.asarray(x0, dtype=float)
+
+    @staticmethod
+    def _interpolate_solution(solution, t_query):
+        times = np.asarray(solution.get("node_times", []), dtype=float)
+        xy_all = solution.get("xy_all", [])
+
+        if times.size == 0 or len(xy_all) != times.size:
+            return None
+
+        xy_arr = np.asarray(xy_all, dtype=float).reshape(times.size, 2)
+        t_query = float(t_query)
+
+        if t_query <= times[0]:
+            return xy_arr[0].copy()
+
+        if t_query >= times[-1]:
+            return xy_arr[-1].copy()
+
+        k_hi = int(np.searchsorted(times, t_query, side="right"))
+        k_lo = k_hi - 1
+
+        dt = times[k_hi] - times[k_lo]
+        if dt <= 1e-12:
+            return xy_arr[k_lo].copy()
+
+        alpha = (t_query - times[k_lo]) / dt
+        return xy_arr[k_lo] + alpha * (xy_arr[k_hi] - xy_arr[k_lo])
+
     # ==========================================================
     # DR / HISTORY
     # ==========================================================
@@ -514,37 +607,60 @@ class FGNavFilter(BaseNavFilter):
         if len(st.history) > self.history_length:
             st.history[:] = st.history[-self.history_length:]
 
-    def _reference_xy_at_time(self, st, t_query):
+    def _reference_state_at_time(self, st, t_query):
+        """
+        Interpolate full recursive state at t_query using history.
+
+        Interpolates:
+        - x, y, z linearly
+        - psi with angle wrapping
+        - u, v linearly
+        """
         t_query = float(t_query)
 
         if not st.history:
-            return st.x[:2].copy()
+            return st.x.copy()
 
-        best = None
-        best_dt = np.inf
+        hist = sorted(st.history, key=lambda e: float(e["t"]))
 
-        for entry in reversed(st.history):
-            t_entry = float(entry["t"])
-            dt = abs(t_entry - t_query)
+        if t_query <= float(hist[0]["t"]):
+            return np.asarray(hist[0]["x"], dtype=float).copy()
 
-            if dt < best_dt:
-                best_dt = dt
-                best = entry
+        if t_query >= float(hist[-1]["t"]):
+            return np.asarray(hist[-1]["x"], dtype=float).copy()
 
-            if dt < 1e-9:
-                break
+        for k in range(1, len(hist)):
+            e0 = hist[k - 1]
+            e1 = hist[k]
 
-        if best is None:
-            return st.x[:2].copy()
+            t0 = float(e0["t"])
+            t1 = float(e1["t"])
 
-        return np.asarray(best["x"], dtype=float)[:2].copy()
+            if t0 <= t_query <= t1:
+                x0 = np.asarray(e0["x"], dtype=float).copy()
+                x1 = np.asarray(e1["x"], dtype=float).copy()
+
+                if t1 - t0 <= 1e-12:
+                    return x0.copy()
+
+                alpha = (t_query - t0) / (t1 - t0)
+
+                x = x0 + alpha * (x1 - x0)
+
+                dpsi = self._wrap_deg(x1[3] - x0[3])
+                x[3] = self._wrap_deg(x0[3] + alpha * dpsi)
+
+                return x
+
+        return st.x.copy()
+
+    def _reference_xy_at_time(self, st, t_query):
+        x = self._reference_state_at_time(st, t_query)
+        return np.asarray(x[:2], dtype=float).copy()
 
     def _integrate_dr_between(self, st, t0, t1):
         """
-        Numerical DR displacement between t0 and t1.
-
-        Uses the recursively propagated high-rate trajectory stored in history:
-            Delta x_DR ~= x_DR(t1) - x_DR(t0)
+        DR displacement between t0 and t1 from interpolated recursive history.
         """
         p0 = self._reference_xy_at_time(st, t0)
         p1 = self._reference_xy_at_time(st, t1)
@@ -567,6 +683,11 @@ class FGNavFilter(BaseNavFilter):
     # HELPERS
     # ==========================================================
 
+    @staticmethod
+    def _nearest_time_index(times, t_query):
+        arr = np.asarray(times, dtype=float)
+        return int(np.argmin(np.abs(arr - float(t_query))))
+
     def _writeback_all(self, sim):
         for agent in sim.agents.values():
             st = self.filters[agent.name]
@@ -585,9 +706,10 @@ class FGNavFilter(BaseNavFilter):
                 "last_coop_update": float(st.last_coop_update),
                 "quality": float(st.quality),
                 "t": float(st.t),
-                "fg_cost": float(self.fg_last_cost)
-                if np.isfinite(self.fg_last_cost)
+                "fg_cost": float(st.fg_last_cost)
+                if np.isfinite(st.fg_last_cost)
                 else np.nan,
+                "fg_status": str(st.fg_last_status),
                 "n_fg_range": int(len(st.fg_range_window)),
                 "n_fg_gps": int(len(st.fg_gps_window)),
             }

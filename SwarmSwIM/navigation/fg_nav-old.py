@@ -28,6 +28,8 @@ class NavState:
     fg_range_window: list = field(default_factory=list)
     fg_gps_window: list = field(default_factory=list)
 
+    fg_last_solution: dict = field(default_factory=dict)
+
 
 class FGNavFilter(BaseNavFilter):
     """
