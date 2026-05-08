@@ -24,7 +24,7 @@ def build_min_payload(agent, tx_time):
 
     return {
         "type": "consensus",
-        "id": agent.name,
+        "id": agent.name,#default in the heade
         "tx_time": tx_time,
         "q": q_i,
     }

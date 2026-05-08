@@ -17,7 +17,7 @@ import numpy as np
 ranging = True
 log_str = "with_ranging" if ranging else "no_range"
 
-leader_id = "A04"
+leader_id = "A02"
 K_select = 4
 
 
@@ -80,6 +80,7 @@ body_vels = {
     "A03": [0.3, 0.0],
     "A04": [0.5, 0.0],
 }
+
 absolute_heading = [180, 180, 180, 180]
 
 i = 0
@@ -131,10 +132,21 @@ MAC.register_agents(S.agents.values())
 # Navigation filters
 # =================================
 
-Nav = EKFNavFilter(writeback=True)
-#Nav = FGNavFilter(writeback=True)
+Nav = EKFNavFilter(
+    writeback=True,
+    surface_agents=("A02",),
+)
+
+# Nav = FGNavFilter(
+#     writeback=True,
+#     surface_agents=("A02",),
+# )
 
 Nav.register_agents(S.agents.values())
+
+# Store the true/base surface agents.
+# Temporarily promoted agents will be added/removed from Nav.surface_agents.
+base_surface_agents = set(Nav.surface_agents)
 
 for agent in S.agents.values():
     st = Nav.get_state(agent)
@@ -142,6 +154,76 @@ for agent in S.agents.values():
     agent.est_pos = st.x[:3].copy()
     agent.est_heading = float(st.x[3])
     agent.est_cov = st.P.copy()
+
+# =================================
+# Sporadic GPS-fix policy
+# =================================
+
+gps_fix_enabled = True
+
+# q_i = 1 / trace(P_pos)
+# Low q_i means poor navigation quality.
+# This threshold triggers when trace(P_pos) > 5.0 m^2.
+gps_fix_q_thresh = 1.0 / 2.0
+
+# Duration for which an underwater agent is temporarily treated as a surface agent.
+gps_fix_duration = 1.0
+
+# Minimum time between two simulated GPS fixes for the same agent.
+gps_fix_cooldown = 300.0
+
+gps_fix_until = {}
+gps_fix_last = {}
+
+
+def update_sporadic_gps_fixes(S, Nav):
+    """
+    Temporarily add low-quality underwater agents to Nav.surface_agents.
+
+    This does not physically resurface the vehicle. It only allows
+    Nav.update_surface_position() to apply a noisy GPS XY correction
+    for a short time window.
+    """
+    if not gps_fix_enabled:
+        Nav.surface_agents = set(base_surface_agents)
+        return
+
+    t = float(S.time)
+
+    # Always start from the real/base surface agents.
+    active_surface_agents = set(base_surface_agents)
+
+    for agent in S.agents.values():
+        nav_info = getattr(agent, "nav_info", {}) or {}
+
+        traceP = float(nav_info.get("traceP_pos", np.inf))
+        q_i = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
+
+        active_until = gps_fix_until.get(agent.name, -np.inf)
+        last_fix = gps_fix_last.get(agent.name, -np.inf)
+
+        # Keep an already-triggered temporary GPS window active.
+        if t <= active_until:
+            active_surface_agents.add(agent.name)
+            continue
+
+        # Do not trigger extra GPS fixes for real surface agents.
+        if agent.name in base_surface_agents:
+            continue
+
+        # Trigger a new temporary GPS window if nav quality is poor.
+        if q_i < gps_fix_q_thresh and t - last_fix >= gps_fix_cooldown:
+            active_surface_agents.add(agent.name)
+            gps_fix_until[agent.name] = t + gps_fix_duration
+            gps_fix_last[agent.name] = t
+
+            print(
+                f"[GPS FIX] t={t:.2f}s | {agent.name} temporarily promoted "
+                f"to surface agent | q={q_i:.4f} | traceP={traceP:.4f}"
+            )
+
+    Nav.surface_agents = active_surface_agents
+
 
 # =================================
 # Visualization properties
@@ -183,10 +265,12 @@ gps_update_dt = 1.0 / gps_update_hz
 next_local_update_time = 0.0
 next_gps_update_time = 0.0
 
-
 # =================================
 # Simulation callback
 # =================================
+
+count = 0
+
 
 def cycle(nav_logs, coop_logs, coop_update_debug_logs):
     global frame, print_bootstrap, next_local_update_time, next_gps_update_time
@@ -246,7 +330,7 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
     if ranging:
         Nav.process_cooperative(S, delivered)
 
-    # Common local updates at 10 Hz
+    # Common local updates at 5 Hz
     if S.time + 1e-9 >= next_local_update_time:
         for agent in S.agents.values():
             Nav.update_local(agent, S)
@@ -254,11 +338,21 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
 
     # GPS/surface XY at 1 Hz
     if S.time + 1e-9 >= next_gps_update_time:
+        # Make nav_info current before checking q_i.
+        if getattr(Nav, "writeback", False):
+            Nav._writeback_all(S)
+
+        # Temporarily promote poor-quality underwater agents.
+        update_sporadic_gps_fixes(S, Nav)
+
         for agent in S.agents.values():
             Nav.update_surface_position(agent, S)
-        next_gps_update_time += gps_update_dt
 
-    Nav.surface_agents
+        # Write back again after possible GPS corrections.
+        if getattr(Nav, "writeback", False):
+            Nav._writeback_all(S)
+
+        next_gps_update_time += gps_update_dt
 
     # =================================
     # Logging
@@ -307,6 +401,22 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
                 f"| norm={np.linalg.norm(err):6.3f}"
             )
 
+        print("\n--- GPS Fix State ---")
+        for agent in S.agents.values():
+            nav_info = getattr(agent, "nav_info", {}) or {}
+            traceP = float(nav_info.get("traceP_pos", np.inf))
+            q_i = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
+            is_surface = agent.name in Nav.surface_agents
+            is_base_surface = agent.name in base_surface_agents
+
+            print(
+                f"{agent.name:>3} | "
+                f"q={q_i:8.4f} | "
+                f"traceP={traceP:8.4f} | "
+                f"surface={is_surface} | "
+                f"base_surface={is_base_surface}"
+            )
+
         print("\n--- MAC stats (adaptive) ---")
         print(
             f"TX={MAC.stats['tx']:3d} | "
@@ -352,6 +462,7 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
 
 def cycle_callback():
     cycle(nav_logs, coop_logs, coop_update_debug_logs)
+
 
 visualizer = Visualizer2D(S, cycle_callback, properties, mac=MAC)
 

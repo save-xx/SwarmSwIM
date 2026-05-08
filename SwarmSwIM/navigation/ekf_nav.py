@@ -1,16 +1,21 @@
-import copy
 from dataclasses import dataclass, field
+
 import numpy as np
 
 from .base_nav import BaseNavFilter
+
 
 @dataclass
 class NavState:
     """
     EKF state container for one agent.
-    State:
+
+    State vector:
         x = [x, y, z, psi, u, v]^T
+
+    where psi is heading in degrees and [u, v] are body-frame velocities.
     """
+
     x: np.ndarray
     P: np.ndarray
     t: float
@@ -19,17 +24,18 @@ class NavState:
     last_coop_update: float = 0.0
     quality: float = np.inf
 
-    last_coop_meas_time: dict = field(default_factory=dict)
+    last_range_time: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
 
 
 class EKFNavFilter(BaseNavFilter):
     """
-    Distributed Cooperative EKF for SwarmSwIM.
+    Distributed cooperative EKF for SwarmSwIM.
 
-    State
-    -----
-    x = [x, y, z, psi, u, v]^T
+    State vector:
+        x = [x, y, z, psi, u, v]^T
+
+    where psi is heading in degrees and [u, v] are body-frame velocities.
     """
 
     def __init__(
@@ -40,16 +46,16 @@ class EKFNavFilter(BaseNavFilter):
         R_heading_deg=4.0,
         R_body_vel_diag=np.array([0.003, 0.003]),
         R_range=0.01,
-        R_coop_updates=0.5,
+        R_corr=0.5,
+        nis_gate=9.0,  # about 99.7%
+        # nis_gate=3.84: about 95% scalar chi-square gate
+        # nis_gate=6.63: about 99%
         alpha=1.0,
         min_range=1e-2,
-
         sigma_rel_speed=0.2,
-
-        surface_agents=("A04", "A02"),
+        surface_agents=("A02",),
         var_gps_fix=np.array([0.25, 0.25]),
         R_surface_pos_diag=(0.04, 0.04),
-
         history_length=1000,
         writeback=True,
         keep_history=True,
@@ -64,55 +70,53 @@ class EKFNavFilter(BaseNavFilter):
         self.R_heading = float(R_heading_deg)
         self.R_body_vel = np.diag(np.asarray(R_body_vel_diag, dtype=float))
         self.R_range = float(R_range)
-        self.R_coop_updates = float(R_coop_updates)
-
-
-        self.var_gps_fix = np.diag(np.asarray(var_gps_fix, dtype=float))
+        self.R_corr = float(R_corr)
+        self.nis_gate = float(nis_gate)
 
         self.alpha = float(alpha)
         self.min_range = float(min_range)
         self.sigma_rel_speed = float(sigma_rel_speed)
 
+        self.surface_agents = set(surface_agents)
+        self.P_gps_fix = np.diag(np.asarray(var_gps_fix, dtype=float))
+        self.R_surface_pos = np.diag(np.asarray(R_surface_pos_diag, dtype=float))
+
         self.history_length = int(history_length)
         self.writeback = bool(writeback)
         self.keep_history = bool(keep_history)
 
-        self.surface_agents = set(surface_agents)
-        self.R_surface_pos = np.diag(np.asarray(R_surface_pos_diag, dtype=float))
-
         self.rng = np.random.default_rng(rng_seed)
-
-        self.gps_noise = self.rng.normal(
+        self.gps_bias = self.rng.normal(
             loc=0.0,
-            scale=np.sqrt(np.diag(self.var_gps_fix)),
-            size=2
+            scale=np.sqrt(np.diag(self.P_gps_fix)),
+            size=2,
         )
 
-
         self.coop_update_log = []
-        self.nu = np.nan
+        self.last_range_residual = np.nan
 
     # ==========================================================
     # Base hooks
     # ==========================================================
 
     def _init_filter(self, agent):
-        
+        vel_body_0 = self._get_body_velocity_measurement(agent, None)
 
-        vel0 = self._get_body_velocity_measurement(agent, None)
-
-        x0 = np.array([
-            float(agent.pos[0]) + self.gps_noise[0],
-            float(agent.pos[1]) + self.gps_noise[1],
-            float(agent.pos[2]),
-            float(agent.psi),
-            float(vel0[0]),
-            float(vel0[1]),
-        ], dtype=float)
+        x0 = np.array(
+            [
+                float(agent.pos[0]) + self.gps_bias[0],
+                float(agent.pos[1]) + self.gps_bias[1],
+                float(agent.pos[2]),
+                float(agent.psi),
+                float(vel_body_0[0]),
+                float(vel_body_0[1]),
+            ],
+            dtype=float,
+        )
 
         P0 = np.diag(self.P0_diag)
 
-        st = NavState(
+        state = NavState(
             x=x0,
             P=P0,
             t=0.0,
@@ -123,98 +127,120 @@ class EKFNavFilter(BaseNavFilter):
 
         if self.keep_history:
             self._append_history_snapshot(
-                st=st,
+                state=state,
                 t=0.0,
-                x=st.x,
-                P=st.P,
-                meas_depth=float(agent.measured_depth),
-                meas_heading=float(agent.measured_heading),
-                meas_body_vel=np.asarray(vel0, dtype=float),
+                x=state.x,
+                P=state.P,
+                z_depth=float(agent.measured_depth),
+                z_heading=float(agent.measured_heading),
+                z_body_vel=np.asarray(vel_body_0, dtype=float),
             )
 
-        return st
+        return state
 
     def predict(self, agent, sim):
-        st = self.filters[agent.name]
-        dt = float(sim.time - st.t)
+        state = self.filters[agent.name]
+        dt = float(sim.time - state.t)
         if dt <= 0.0:
             return
 
-        F = self._transition_jacobian(st.x, dt)
-        x_pred = self._propagate_state(st.x, dt)
-
+        F = self._transition_jacobian(state.x, dt)
         Q = np.diag(self.Q_diag * dt)
 
-        st.x = x_pred
-        st.P = self._symmetrize(F @ st.P @ F.T + Q)
-        st.t = float(sim.time)
-        st.quality = float(np.trace(st.P[:3, :3]))
+        state.x = self._propagate_state(state.x, dt)
+        state.P = self._symmetrize(F @ state.P @ F.T + Q)
+        state.t = float(sim.time)
+        state.quality = float(np.trace(state.P[:3, :3]))
 
         if self.keep_history:
-            st.history.append({
-                "kind": "predict_trace",
-                "t": float(sim.time),
-                "x": st.x.copy(),
-                "P": st.P.copy(),
-            })
-            self._trim_history(st)
+            state.history.append(
+                {
+                    "kind": "prediction",
+                    "t": float(sim.time),
+                    "x": state.x.copy(),
+                    "P": state.P.copy(),
+                }
+            )
+            self._trim_history(state)
 
     def update_local(self, agent, sim):
-
-        st = self.filters[agent.name]
+        state = self.filters[agent.name]
 
         z_depth = np.array([float(agent.measured_depth)], dtype=float)
-        z_psi = float(agent.measured_heading)
-        z_vel = self._get_body_velocity_measurement(agent, sim)
+        z_heading = float(agent.measured_heading)
+        z_body_vel = self._get_body_velocity_measurement(agent, sim)
 
-        self._apply_local_measurements(st, z_depth, z_psi, z_vel)
+        self._apply_local_measurements(state, z_depth, z_heading, z_body_vel)
 
-        st.last_local_update = float(sim.time)
-        st.quality = float(np.trace(st.P[:3, :3]))
+        state.last_local_update = float(sim.time)
+        state.quality = float(np.trace(state.P[:3, :3]))
 
         if self.keep_history:
             self._append_history_snapshot(
-                st=st,
+                state=state,
                 t=float(sim.time),
-                x=st.x,
-                P=st.P,
-                meas_depth=float(z_depth[0]),
-                meas_heading=float(z_psi),
-                meas_body_vel=np.asarray(z_vel, dtype=float),
+                x=state.x,
+                P=state.P,
+                z_depth=float(z_depth[0]),
+                z_heading=float(z_heading),
+                z_body_vel=np.asarray(z_body_vel, dtype=float),
             )
 
     def update_surface_position(self, agent, sim):
         if not self._is_surface_agent(agent):
             return
 
-        st = self.filters[agent.name]
+        state = self.filters[agent.name]
 
-        pos_noise = self.rng.normal(
+        gps_noise = self.rng.normal(
             loc=0.0,
-            scale=np.sqrt(np.diag(self.var_gps_fix)),
-            size=2
+            scale=np.sqrt(np.diag(self.P_gps_fix)),
+            size=2,
         )
 
-        z_xy = np.array([
-            float(agent.pos[0]) + pos_noise[0],
-            float(agent.pos[1]) + pos_noise[1],
-        ], dtype=float)
+        z_xy = np.array(
+            [
+                float(agent.pos[0]) + gps_noise[0],
+                float(agent.pos[1]) + gps_noise[1],
+            ],
+            dtype=float,
+        )
 
-        H_xy = np.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        ], dtype=float)
+        H_xy = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=float,
+        )
+
+        R_xy = self.R_surface_pos.copy()
 
         self._ekf_update_linear(
-            st,
+            state,
             z=z_xy,
-            h=st.x[0:2].copy(),
+            h=state.x[0:2].copy(),
             H=H_xy,
-            R=self.R_surface_pos,
+            R=R_xy,
             angle_idx=None,
         )
 
-        st.quality = float(np.trace(st.P[:3, :3]))
+        state.quality = float(np.trace(state.P[:3, :3]))
+
+        # Critical for delayed/OOSM cooperative updates:
+        # store GPS/surface XY measurement so replay does not erase it.
+        if self.keep_history:
+            self._append_history_snapshot(
+                state=state,
+                t=float(sim.time),
+                x=state.x,
+                P=state.P,
+                z_depth=float(agent.measured_depth),
+                z_heading=float(agent.measured_heading),
+                z_body_vel=self._get_body_velocity_measurement(agent, sim),
+                z_xy=z_xy,
+                R_xy=R_xy,
+            )
 
     def process_cooperative(self, sim, delivered):
         for receiver_name, msg in delivered.items():
@@ -231,61 +257,61 @@ class EKFNavFilter(BaseNavFilter):
             if sender_name not in receiver.AcousticRange:
                 continue
 
-            st = self.filters[receiver_name]
-            meas = receiver.AcousticRange[sender_name]
+            state = self.filters[receiver_name]
+            range_meas = receiver.AcousticRange[sender_name]
             payload = msg.payload
 
             if payload is None:
                 continue
-            if payload.get("type") != "nav":#(process only if nav payload present)
+            if payload.get("type") != "nav":
                 continue
             if "pos" not in payload or "cov" not in payload or "body_vel" not in payload:
                 continue
 
-            t_meas = meas.get("t_meas", None)
+            t_meas = range_meas.get("t_meas", None)
             if t_meas is None:
                 continue
             t_meas = float(t_meas)
 
-            last_t_meas = st.last_coop_meas_time.get(sender_name, -np.inf)
+            last_t_meas = state.last_range_time.get(sender_name, -np.inf)
             if t_meas <= last_t_meas:
                 continue
 
-            p_j = np.asarray(payload["pos"], dtype=float).reshape(-1)
-            if p_j.size != 3:
+            p_j_tx = np.asarray(payload["pos"], dtype=float).reshape(-1)
+            if p_j_tx.size != 3:
                 continue
 
-            v_j = np.asarray(payload["body_vel"], dtype=float).reshape(-1)
-            if v_j.size != 2:
+            vel_j_body = np.asarray(payload["body_vel"], dtype=float).reshape(-1)
+            if vel_j_body.size != 2:
                 continue
 
-            psi_j = float(payload.get("heading", np.nan))
-            if not np.isfinite(psi_j):
+            psi_j_tx = float(payload.get("heading", np.nan))
+            if not np.isfinite(psi_j_tx):
                 continue
 
-            P_j = self._parse_sender_cov(payload["cov"])
-            if P_j is None:
+            P_j_tx = self._parse_sender_cov(payload["cov"])
+            if P_j_tx is None:
                 continue
 
-            t_tx = float(payload.get("tx_time", meas.get("t_tx", sim.time)))
-            staleness = max(0.0, float(sim.time) - t_tx)
-            z = float(meas["range"])
+            t_tx = float(payload.get("tx_time", range_meas.get("t_tx", sim.time)))
+            packet_age = max(0.0, float(sim.time) - t_tx)
+            z_range = float(range_meas["range"])
 
             self._update_cooperative_range(
                 receiver_name=receiver_name,
                 sender_name=sender_name,
-                p_j=p_j,
-                psi_j=psi_j,
-                v_j=v_j,
-                P_j=P_j,
-                z=z,
-                staleness=staleness,
+                p_j_tx=p_j_tx,
+                psi_j_tx=psi_j_tx,
+                vel_j_body=vel_j_body,
+                P_j_tx=P_j_tx,
+                z_range=z_range,
+                packet_age=packet_age,
                 t_now=float(sim.time),
                 t_tx=t_tx,
                 t_meas=t_meas,
-                sim=sim,
             )
-            st.last_coop_meas_time[sender_name] = t_meas
+
+            state.last_range_time[sender_name] = t_meas
 
         if self.writeback:
             self._writeback_all(sim)
@@ -298,114 +324,132 @@ class EKFNavFilter(BaseNavFilter):
         self,
         receiver_name,
         sender_name,
-        p_j,
-        psi_j,
-        v_j,
-        P_j,
-        z,
-        staleness,
+        p_j_tx,
+        psi_j_tx,
+        vel_j_body,
+        P_j_tx,
+        z_range,
+        packet_age,
         t_now,
         t_tx=np.nan,
         t_meas=np.nan,
-        sim=None,
     ):
-        st = self.filters[receiver_name]
+        state = self.filters[receiver_name]
+        P_pre_now = state.P.copy()
 
-        x_pre_now = st.x.copy()
-        P_pre_now = st.P.copy()
-
-        hist_idx = self._get_history_index_before_or_equal(st, t_meas)
+        hist_idx = self._get_history_index_before_or_equal(state, t_meas)
         if hist_idx is None:
             return
 
-        hist_entry = st.history[hist_idx]
+        hist_entry = state.history[hist_idx]
         if hist_entry.get("kind") != "snapshot":
-            hist_idx = self._get_nearest_snapshot_index_before(st, hist_idx)
+            hist_idx = self._get_nearest_snapshot_index_before(state, hist_idx)
             if hist_idx is None:
                 return
-            hist_entry = st.history[hist_idx]
+            hist_entry = state.history[hist_idx]
 
         t_hist = float(hist_entry["t"])
-        x_rx_hist = hist_entry["x"].copy()
-        P_rx_hist = hist_entry["P"].copy()
+        x_i_hist = hist_entry["x"].copy()
+        P_ii_hist = hist_entry["P"].copy()
 
-        dt_hist_to_meas = max(0.0, float(t_meas) - t_hist)
-        x_rx_meas, P_rx_meas, _ = self._propagate_cov(
-            x=x_rx_hist,
-            P=P_rx_hist,
-            dt=dt_hist_to_meas,
+        dt_i = max(0.0, float(t_meas) - t_hist)
+        x_i_meas, P_ii_meas = self._propagate_cov(
+            x=x_i_hist,
+            P=P_ii_hist,
+            dt=dt_i,
         )
 
-        dt_sender = 0.0
         if np.isfinite(t_tx) and np.isfinite(t_meas):
-            dt_sender = max(0.0, float(t_meas) - float(t_tx))
+            dt_j = max(0.0, float(t_meas) - float(t_tx))
+        else:
+            dt_j = 0.0
 
-        xj_tx = np.array([
-            float(p_j[0]),
-            float(p_j[1]),
-            float(p_j[2]),
-            float(psi_j),
-            float(v_j[0]),
-            float(v_j[1]),
-        ], dtype=float)
+        x_j_tx = np.array(
+            [
+                float(p_j_tx[0]),
+                float(p_j_tx[1]),
+                float(p_j_tx[2]),
+                float(psi_j_tx),
+                float(vel_j_body[0]),
+                float(vel_j_body[1]),
+            ],
+            dtype=float,
+        )
 
-        xj_meas, Pj6_meas = self._propagate_sender_to_meas(xj_tx, P_j, dt_sender)
-        p_j_meas = xj_meas[:3].copy()
-        P_j_meas = Pj6_meas[:3, :3]
+        x_j_meas, P_jj_meas = self._propagate_sender_to_meas(x_j_tx, P_j_tx, dt_j)
 
-        p_i_meas = x_rx_meas[:3].copy()
-        diff = p_i_meas - p_j_meas
-        r_hat = float(np.linalg.norm(diff))
+        p_i_meas = x_i_meas[:3].copy()
+        p_j_meas = x_j_meas[:3].copy()
+        delta_p = p_i_meas - p_j_meas
+
+        r_hat = float(np.linalg.norm(delta_p))
         if r_hat < self.min_range:
             return
 
-        H_i = np.array([[
-            diff[0] / r_hat,
-            diff[1] / r_hat,
-            diff[2] / r_hat,
-            0.0, 0.0, 0.0
-        ]], dtype=float)
+        H_i = np.array(
+            [
+                [
+                    delta_p[0] / r_hat,
+                    delta_p[1] / r_hat,
+                    delta_p[2] / r_hat,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+            ],
+            dtype=float,
+        )
 
-        H_j = np.array([[
-            -diff[0] / r_hat,
-            -diff[1] / r_hat,
-            -diff[2] / r_hat
-        ]], dtype=float)
+        H_j = np.array(
+            [
+                [
+                    -delta_p[0] / r_hat,
+                    -delta_p[1] / r_hat,
+                    -delta_p[2] / r_hat,
+                ]
+            ],
+            dtype=float,
+        )
 
         alpha_eff = 0.2 if sender_name in self.surface_agents else self.alpha
-        R_coop_updates = 0.1 if sender_name in self.surface_agents else self.R_coop_updates
-        R_sender = alpha_eff * float((H_j @ P_j_meas @ H_j.T)[0, 0])
-        R_delay = float((self.sigma_rel_speed * staleness) ** 2)
-        R_eff = float(self.R_range + R_sender + R_delay + R_coop_updates)
+        R_corr_eff = 0.1 if sender_name in self.surface_agents else self.R_corr
+
+        R_sender = alpha_eff * float((H_j @ P_jj_meas[:3, :3] @ H_j.T)[0, 0])
+        R_delay = float((self.sigma_rel_speed * packet_age) ** 2)
+        R_eff = float(self.R_range + R_sender + R_delay + R_corr_eff)
         R_eff = max(R_eff, 1e-12)
 
-        nu = float(z - r_hat)
-        self.nu = nu
+        nu = float(z_range - r_hat)
+        self.last_range_residual = nu
 
-        S = float((H_i @ P_rx_meas @ H_i.T)[0, 0] + R_eff)
+        S = float((H_i @ P_ii_meas @ H_i.T)[0, 0] + R_eff)
         if S <= 0.0:
             return
 
-        K = (P_rx_meas @ H_i.T) / S
+        nis = float((nu**2) / S)
 
-        x_post_meas = x_rx_meas.copy()
-        x_post_meas = x_post_meas + (K[:, 0] * nu)
-        x_post_meas[3] = self._wrap_deg(x_post_meas[3])
+        if nis > self.nis_gate:
+            print("rejected - nis gate")
+            return
+
+        K = (P_ii_meas @ H_i.T) / S
+
+        x_i_post = x_i_meas.copy()
+        x_i_post = x_i_post + K[:, 0] * nu
+        x_i_post[3] = self._wrap_deg(x_i_post[3])
 
         I = np.eye(6)
         KH = K @ H_i
-        Rm = np.array([[R_eff]], dtype=float)
-        P_post_meas = (I - KH) @ P_rx_meas @ (I - KH).T + K @ Rm @ K.T
-        P_post_meas = self._symmetrize(P_post_meas)
+        R_mat = np.array([[R_eff]], dtype=float)
+        P_ii_post = (I - KH) @ P_ii_meas @ (I - KH).T + K @ R_mat @ K.T
+        P_ii_post = self._symmetrize(P_ii_post)
 
-        nis = float((nu ** 2) / S)
-
-        x_replay = x_post_meas.copy()
-        P_replay = P_post_meas.copy()
+        x_replay = x_i_post.copy()
+        P_replay = P_ii_post.copy()
         t_replay = float(t_meas)
 
-        for k in range(hist_idx + 1, len(st.history)):
-            entry = st.history[k]
+        for k in range(hist_idx + 1, len(state.history)):
+            entry = state.history[k]
             if entry.get("kind") != "snapshot":
                 continue
 
@@ -420,102 +464,112 @@ class EKFNavFilter(BaseNavFilter):
                 continue
 
             if dt > 0.0:
-                x_replay, P_replay, _ = self._propagate_cov(
+                x_replay, P_replay = self._propagate_cov(
                     x=x_replay,
                     P=P_replay,
                     dt=dt,
                 )
                 t_replay = t_k
 
+            # Replay standard local measurements.
             x_replay, P_replay = self._apply_local_measurements_to_state(
                 x_replay,
                 P_replay,
-                meas_depth=float(entry["meas_depth"]),
-                meas_heading=float(entry["meas_heading"]),
-                meas_body_vel=np.asarray(entry["meas_body_vel"], dtype=float),
+                z_depth=float(entry["z_depth"]),
+                z_heading=float(entry["z_heading"]),
+                z_body_vel=np.asarray(entry["z_body_vel"], dtype=float),
             )
+
+            # Replay GPS/surface XY measurements if this snapshot contains one.
+            # This is the fix that prevents delayed acoustic updates from
+            # reconstructing the present state without the GPS correction.
+            if "z_xy" in entry:
+                R_xy = entry.get("R_xy", self.R_surface_pos)
+                x_replay, P_replay = self._apply_surface_xy_measurement_to_state(
+                    x_replay,
+                    P_replay,
+                    z_xy=np.asarray(entry["z_xy"], dtype=float),
+                    R_xy=np.asarray(R_xy, dtype=float),
+                )
 
         dt_tail = float(t_now - t_replay)
         if dt_tail > 0.0:
-            x_replay, P_replay, _ = self._propagate_cov(
+            x_replay, P_replay = self._propagate_cov(
                 x=x_replay,
                 P=P_replay,
                 dt=dt_tail,
             )
 
-        st.x = x_replay
-        st.P = P_replay
-        st.t = float(t_now)
-        st.x[3] = self._wrap_deg(st.x[3])
-        st.last_coop_update = float(t_now)
-        st.quality = float(np.trace(st.P[:3, :3]))
+        state.x = x_replay
+        state.P = P_replay
+        state.t = float(t_now)
+        state.x[3] = self._wrap_deg(state.x[3])
+        state.last_coop_update = float(t_now)
+        state.quality = float(np.trace(state.P[:3, :3]))
 
-        self.coop_update_log.append({
-            "t": float(t_now),
-            "receiver": receiver_name,
-            "sender": sender_name,
-            "accepted": 1,
-            "range": float(z),
-            "r_hat": float(r_hat),
-            "nu": float(nu),
-            "nis": float(nis),
-            "S": float(S),
-            "R_eff": float(R_eff),
-            "packet_age": float(staleness),
-            "t_tx_payload": float(t_tx),
-            "t_meas": float(t_meas),
-            "dt_sender": float(dt_sender),
-            "dt_receiver": float(t_now - t_meas),
-            "sender_x_meas": float(p_j_meas[0]),
-            "sender_y_meas": float(p_j_meas[1]),
-            "sender_z_meas": float(p_j_meas[2]),
-            "receiver_x_meas": float(x_rx_meas[0]),
-            "receiver_y_meas": float(x_rx_meas[1]),
-            "receiver_z_meas": float(x_rx_meas[2]),
-            "receiver_x_post": float(st.x[0]),
-            "receiver_y_post": float(st.x[1]),
-            "receiver_z_post": float(st.x[2]),
-            "traceP_pre": float(np.trace(P_pre_now[:3, :3])),
-            "traceP_post": float(np.trace(st.P[:3, :3])),
-        })
+        self.coop_update_log.append(
+            {
+                "t": float(t_now),
+                "receiver": receiver_name,
+                "sender": sender_name,
+                "accepted": 1,
+                "range": float(z_range),
+                "r_hat": float(r_hat),
+                "nu": float(nu),
+                "nis": float(nis),
+                "nis_gate": float(self.nis_gate),
+                "S": float(S),
+                "R_eff": float(R_eff),
+                "packet_age": float(packet_age),
+                "t_tx_payload": float(t_tx),
+                "t_meas": float(t_meas),
+                "dt_sender": float(dt_j),
+                "dt_receiver": float(t_now - t_meas),
+                "sender_x_meas": float(p_j_meas[0]),
+                "sender_y_meas": float(p_j_meas[1]),
+                "sender_z_meas": float(p_j_meas[2]),
+                "receiver_x_meas": float(x_i_meas[0]),
+                "receiver_y_meas": float(x_i_meas[1]),
+                "receiver_z_meas": float(x_i_meas[2]),
+                "receiver_x_post": float(state.x[0]),
+                "receiver_y_post": float(state.x[1]),
+                "receiver_z_post": float(state.x[2]),
+                "traceP_pre": float(np.trace(P_pre_now[:3, :3])),
+                "traceP_post": float(np.trace(state.P[:3, :3])),
+            }
+        )
 
     # ==========================================================
     # Transition model
     # ==========================================================
 
-
     def _propagate_cov(self, x, P, dt):
-        if dt <= 0.0:
-            return (
-                np.asarray(x, dtype=float).copy(),
-                np.asarray(P, dtype=float).copy(),
-                None,
-            )
-
         x = np.asarray(x, dtype=float).copy()
         P = np.asarray(P, dtype=float).copy()
 
+        if dt <= 0.0:
+            return x, P
+
         F = self._transition_jacobian(x, dt)
-        x_next = self._propagate_state(x, dt)
         Q = np.diag(self.Q_diag * dt)
+
+        x_next = self._propagate_state(x, dt)
         P_next = self._symmetrize(F @ P @ F.T + Q)
 
-        return x_next, P_next, None
+        return x_next, P_next
 
     def _propagate_state(self, x, dt):
-        x = np.asarray(x, dtype=float).copy()
+        x_next = np.asarray(x, dtype=float).copy()
 
-        psi = float(x[3])
-        u = float(x[4])
-        v = float(x[5])
+        psi = float(x_next[3])
+        vel_body = x_next[4:6]
+        vel_ned = self._body_to_ned_2d(vel_body, psi)
 
-        vel_ned = self._body_to_ned_2d(np.array([u, v], dtype=float), psi)
+        x_next[0] += vel_ned[0] * dt
+        x_next[1] += vel_ned[1] * dt
+        x_next[3] = self._wrap_deg(x_next[3])
 
-        x[0] += vel_ned[0] * dt
-        x[1] += vel_ned[1] * dt
-        x[3] = self._wrap_deg(x[3])
-
-        return x
+        return x_next
 
     def _transition_jacobian(self, x, dt):
         return self._constvel_jacobian(x, dt)
@@ -528,22 +582,28 @@ class EKFNavFilter(BaseNavFilter):
         return agent.name in self.surface_agents
 
     def _get_body_velocity_measurement(self, agent, sim):
-        body_vel = self._get_body_velocity_from_agent(agent, sim)
-        return body_vel
+        return self._get_body_velocity_from_agent(agent, sim)
 
-    def _get_body_velocity_from_agent(self, agent, sim):
+    @staticmethod
+    def _get_body_velocity_from_agent(agent, sim):
         if hasattr(agent, "emulated_velocities"):
-            vel = np.asarray(agent.emulated_velocities, dtype=float).reshape(2)
-            return vel.copy()
+            return np.asarray(agent.emulated_velocities, dtype=float).reshape(2).copy()
         return np.zeros(2, dtype=float)
 
     @staticmethod
     def _body_to_ned_2d(v_body, psi_deg):
         psi = np.deg2rad(psi_deg)
-        sinpsi = np.sin(psi)
-        cospsi = np.cos(psi)
-        R_mat = np.array([[cospsi, sinpsi], [sinpsi, -cospsi]], dtype=float)
-        return R_mat @ np.asarray(v_body, dtype=float).reshape(2)
+        sin_psi = np.sin(psi)
+        cos_psi = np.cos(psi)
+
+        R_body_to_ned = np.array(
+            [
+                [cos_psi, sin_psi],
+                [sin_psi, -cos_psi],
+            ],
+            dtype=float,
+        )
+        return R_body_to_ned @ np.asarray(v_body, dtype=float).reshape(2)
 
     # ==========================================================
     # EKF helpers
@@ -554,20 +614,20 @@ class EKFNavFilter(BaseNavFilter):
         u = float(x[4])
         v = float(x[5])
 
-        c = np.cos(psi)
-        s = np.sin(psi)
-        deg2rad = np.pi / 180.0
+        cos_psi = np.cos(psi)
+        sin_psi = np.sin(psi)
+        deg_to_rad = np.pi / 180.0
 
         F = np.eye(6)
-        F[0, 3] = dt * (-s * u + c * v) * deg2rad
-        F[0, 4] = dt * c
-        F[0, 5] = dt * s
-        F[1, 3] = dt * (c * u + s * v) * deg2rad
-        F[1, 4] = dt * s
-        F[1, 5] = -dt * c
+        F[0, 3] = dt * (-sin_psi * u + cos_psi * v) * deg_to_rad
+        F[0, 4] = dt * cos_psi
+        F[0, 5] = dt * sin_psi
+        F[1, 3] = dt * (cos_psi * u + sin_psi * v) * deg_to_rad
+        F[1, 4] = dt * sin_psi
+        F[1, 5] = -dt * cos_psi
         return F
 
-    def _ekf_update_linear(self, st, z, h, H, R, angle_idx=None):
+    def _ekf_update_linear(self, state, z, h, H, R, angle_idx=None):
         z = np.asarray(z, dtype=float).reshape(-1)
         h = np.asarray(h, dtype=float).reshape(-1)
         H = np.asarray(H, dtype=float)
@@ -577,116 +637,170 @@ class EKFNavFilter(BaseNavFilter):
         if angle_idx is not None:
             nu[angle_idx] = self._wrap_deg(nu[angle_idx])
 
-        S = self._symmetrize(H @ st.P @ H.T + R)
+        S = self._symmetrize(H @ state.P @ H.T + R)
 
         try:
             S_inv = np.linalg.inv(S)
         except np.linalg.LinAlgError:
             return
 
-        K = st.P @ H.T @ S_inv
+        K = state.P @ H.T @ S_inv
 
-        st.x = st.x + K @ nu
-        st.x[3] = self._wrap_deg(st.x[3])
+        state.x = state.x + K @ nu
+        state.x[3] = self._wrap_deg(state.x[3])
 
-        I = np.eye(st.P.shape[0])
-        st.P = (I - K @ H) @ st.P @ (I - K @ H).T + K @ R @ K.T
-        st.P = self._symmetrize(st.P)
+        I = np.eye(state.P.shape[0])
+        KH = K @ H
+        state.P = (I - KH) @ state.P @ (I - KH).T + K @ R @ K.T
+        state.P = self._symmetrize(state.P)
 
-    def _apply_local_measurements(self, st, z_depth, z_psi, z_vel):
+    def _apply_local_measurements(self, state, z_depth, z_heading, z_body_vel):
         H_depth = np.array([[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]], dtype=float)
         self._ekf_update_linear(
-            st,
+            state,
             z=np.asarray(z_depth, dtype=float),
-            h=np.array([st.x[2]], dtype=float),
+            h=np.array([state.x[2]], dtype=float),
             H=H_depth,
             R=np.array([[self.R_depth]], dtype=float),
-            angle_idx=None
+            angle_idx=None,
         )
 
-        H_psi = np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]], dtype=float)
+        H_heading = np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]], dtype=float)
         self._ekf_update_linear(
-            st,
-            z=np.array([float(z_psi)], dtype=float),
-            h=np.array([st.x[3]], dtype=float),
-            H=H_psi,
+            state,
+            z=np.array([float(z_heading)], dtype=float),
+            h=np.array([state.x[3]], dtype=float),
+            H=H_heading,
             R=np.array([[self.R_heading]], dtype=float),
-            angle_idx=0
+            angle_idx=0,
         )
 
-        H_vel = np.array([
-            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=float)
+        H_body_vel = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        )
         self._ekf_update_linear(
-            st,
-            z=np.asarray(z_vel, dtype=float),
-            h=st.x[4:6].copy(),
-            H=H_vel,
+            state,
+            z=np.asarray(z_body_vel, dtype=float),
+            h=state.x[4:6].copy(),
+            H=H_body_vel,
             R=self.R_body_vel,
-            angle_idx=None
+            angle_idx=None,
         )
 
-    def _apply_local_measurements_to_state(self, x, P, meas_depth, meas_heading, meas_body_vel):
-        st_tmp = NavState(
+    def _apply_local_measurements_to_state(self, x, P, z_depth, z_heading, z_body_vel):
+        state = NavState(
             x=np.asarray(x, dtype=float).copy(),
             P=np.asarray(P, dtype=float).copy(),
-            t=0.0
+            t=0.0,
         )
         self._apply_local_measurements(
-            st_tmp,
-            z_depth=np.array([float(meas_depth)], dtype=float),
-            z_psi=float(meas_heading),
-            z_vel=np.asarray(meas_body_vel, dtype=float),
+            state,
+            z_depth=np.array([float(z_depth)], dtype=float),
+            z_heading=float(z_heading),
+            z_body_vel=np.asarray(z_body_vel, dtype=float),
         )
-        return st_tmp.x.copy(), st_tmp.P.copy()
+        return state.x.copy(), state.P.copy()
 
-    def _propagate_sender_to_meas(self, xj_tx, P_j, dt_sender):
-        xj_meas = np.asarray(xj_tx, dtype=float).copy()
-        vel_ned = self._body_to_ned_2d(xj_meas[4:6], xj_meas[3])
-        xj_meas[0] += vel_ned[0] * dt_sender
-        xj_meas[1] += vel_ned[1] * dt_sender
-        xj_meas[3] = self._wrap_deg(xj_meas[3])
+    def _apply_surface_xy_measurement_to_state(self, x, P, z_xy, R_xy):
+        state = NavState(
+            x=np.asarray(x, dtype=float).copy(),
+            P=np.asarray(P, dtype=float).copy(),
+            t=0.0,
+        )
 
-        Fj = self._constvel_jacobian(xj_tx, dt_sender)
-        Pj6 = np.zeros((6, 6), dtype=float)
-        Pj6[:3, :3] = P_j
-        Qj = np.diag(self.Q_diag * max(dt_sender, 0.0))
-        Pj6_meas = self._symmetrize(Fj @ Pj6 @ Fj.T + Qj)
-        return xj_meas, Pj6_meas
+        H_xy = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=float,
+        )
+
+        self._ekf_update_linear(
+            state,
+            z=np.asarray(z_xy, dtype=float),
+            h=state.x[0:2].copy(),
+            H=H_xy,
+            R=np.asarray(R_xy, dtype=float),
+            angle_idx=None,
+        )
+
+        return state.x.copy(), state.P.copy()
+
+    def _propagate_sender_to_meas(self, x_j_tx, P_j_tx, dt_j):
+        x_j_meas = np.asarray(x_j_tx, dtype=float).copy()
+
+        vel_j_ned = self._body_to_ned_2d(x_j_meas[4:6], x_j_meas[3])
+        x_j_meas[0] += vel_j_ned[0] * dt_j
+        x_j_meas[1] += vel_j_ned[1] * dt_j
+        x_j_meas[3] = self._wrap_deg(x_j_meas[3])
+
+        F_j = self._constvel_jacobian(x_j_tx, dt_j)
+        P_jj_tx = np.zeros((6, 6), dtype=float)
+        P_jj_tx[:3, :3] = P_j_tx
+
+        Q_j = np.diag(self.Q_diag * max(dt_j, 0.0))
+        P_jj_meas = self._symmetrize(F_j @ P_jj_tx @ F_j.T + Q_j)
+
+        return x_j_meas, P_jj_meas
 
     # ==========================================================
     # History helpers
     # ==========================================================
 
-    def _append_history_snapshot(self, st, t, x, P, meas_depth, meas_heading, meas_body_vel):
-        st.history.append({
+    def _append_history_snapshot(
+        self,
+        state,
+        t,
+        x,
+        P,
+        z_depth,
+        z_heading,
+        z_body_vel,
+        z_xy=None,
+        R_xy=None,
+    ):
+        entry = {
             "kind": "snapshot",
             "t": float(t),
             "x": np.asarray(x, dtype=float).copy(),
             "P": np.asarray(P, dtype=float).copy(),
-            "meas_depth": float(meas_depth),
-            "meas_heading": float(meas_heading),
-            "meas_body_vel": np.asarray(meas_body_vel, dtype=float).copy(),
-        })
-        self._trim_history(st)
+            "z_depth": float(z_depth),
+            "z_heading": float(z_heading),
+            "z_body_vel": np.asarray(z_body_vel, dtype=float).copy(),
+        }
 
-    def _trim_history(self, st):
-        if len(st.history) > self.history_length:
-            st.history[:] = st.history[-self.history_length:]
+        if z_xy is not None:
+            entry["z_xy"] = np.asarray(z_xy, dtype=float).copy()
 
-    def _get_history_index_before_or_equal(self, st, t_query):
+        if R_xy is not None:
+            entry["R_xy"] = np.asarray(R_xy, dtype=float).copy()
+
+        state.history.append(entry)
+        self._trim_history(state)
+
+    def _trim_history(self, state):
+        if len(state.history) > self.history_length:
+            state.history[:] = state.history[-self.history_length:]
+
+    @staticmethod
+    def _get_history_index_before_or_equal(state, t_query):
         idx = None
-        for k, entry in enumerate(st.history):
+        for k, entry in enumerate(state.history):
             if float(entry.get("t", -np.inf)) <= float(t_query) + 1e-12:
                 idx = k
             else:
                 break
         return idx
 
-    def _get_nearest_snapshot_index_before(self, st, start_idx):
+    @staticmethod
+    def _get_nearest_snapshot_index_before(state, start_idx):
         for k in range(start_idx, -1, -1):
-            if st.history[k].get("kind") == "snapshot":
+            if state.history[k].get("kind") == "snapshot":
                 return k
         return None
 
@@ -696,23 +810,23 @@ class EKFNavFilter(BaseNavFilter):
 
     def _writeback_all(self, sim):
         for agent in sim.agents.values():
-            st = self.filters[agent.name]
+            state = self.filters[agent.name]
 
-            agent.nav_state = st
-            agent.est_pos = st.x[:3].copy()
-            agent.est_heading = float(st.x[3])
-            agent.est_body_vel = st.x[4:6].copy()
-            agent.est_cov = st.P.copy()
+            agent.nav_state = state
+            agent.est_pos = state.x[:3].copy()
+            agent.est_heading = float(state.x[3])
+            agent.est_body_vel = state.x[4:6].copy()
+            agent.est_cov = state.P.copy()
 
             agent.nav_info = {
-                "traceP_pos": float(np.trace(st.P[:3, :3])),
-                "detP_pos": float(np.linalg.det(st.P[:3, :3])),
-                "traceP_vel": float(np.trace(st.P[4:6, 4:6])),
-                "last_local_update": float(st.last_local_update),
-                "last_coop_update": float(st.last_coop_update),
-                "quality": float(st.quality),
-                "t": float(st.t),
-                "nu": float(self.nu),
+                "traceP_pos": float(np.trace(state.P[:3, :3])),
+                "detP_pos": float(np.linalg.det(state.P[:3, :3])),
+                "traceP_vel": float(np.trace(state.P[4:6, 4:6])),
+                "last_local_update": float(state.last_local_update),
+                "last_coop_update": float(state.last_coop_update),
+                "quality": float(state.quality),
+                "t": float(state.t),
+                "nu": float(self.last_range_residual),
             }
 
     # ==========================================================
@@ -731,25 +845,25 @@ class EKFNavFilter(BaseNavFilter):
     @staticmethod
     def _parse_sender_cov(cov_payload):
         try:
-            arr = np.asarray(cov_payload, dtype=float)
+            P = np.asarray(cov_payload, dtype=float)
         except Exception:
             return None
 
-        if arr.ndim == 0:
-            val = float(arr)
-            if val < 0.0:
+        if P.ndim == 0:
+            variance = float(P)
+            if variance < 0.0:
                 return None
-            return np.eye(3) * val
+            return np.eye(3) * variance
 
-        if arr.shape == (3,):
-            if np.any(arr < 0.0):
+        if P.shape == (3,):
+            if np.any(P < 0.0):
                 return None
-            return np.diag(arr)
+            return np.diag(P)
 
-        if arr.shape == (3, 3):
-            arr = 0.5 * (arr + arr.T)
-            if np.any(np.linalg.eigvalsh(arr) < -1e-10):
+        if P.shape == (3, 3):
+            P = 0.5 * (P + P.T)
+            if np.any(np.linalg.eigvalsh(P) < -1e-10):
                 return None
-            return arr
+            return P
 
         return None
