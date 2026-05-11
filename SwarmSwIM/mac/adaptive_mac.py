@@ -1,3 +1,7 @@
+from itertools import combinations
+
+import numpy as np
+
 from .base_mac import Base_MAC
 
 
@@ -8,13 +12,21 @@ class Adaptive_TDMA_MAC(Base_MAC):
     - variable slot duration
     - two payload modes: min / nav
     - fixed leader
-    - no agreement yet
+    - H = 1 adaptive selector
 
     Current policy:
-    - leader ranks agents by q_i = 1 / trace(P_pos)
-    - top-K agents send NAV
-    - others send MIN
-    - frame duration changes accordingly
+    - leader selects NAV transmitters by maximizing a utility that includes:
+        1) expected cooperative navigation information gain,
+        2) transmitter navigation quality,
+        3) Age of Information term.
+    - all other agents send MIN.
+    - frame duration changes according to selected packet modes.
+
+    Notes
+    -----
+    Dissemination is not implemented here.
+    The current simulator implementation assumes the MAC object directly knows
+    the selected modes and applies them centrally.
     """
 
     def __init__(
@@ -27,6 +39,12 @@ class Adaptive_TDMA_MAC(Base_MAC):
         nav_payload_builder,
         min_payload_builder,
         K_select=2,
+        w_I=1.0,
+        w_q=1.0,
+        w_A=0.0,
+        sigma_d=0.1,
+        min_geom_range=1e-3,
+        Q_pos_diag=(0.01, 0.01),
     ):
         super().__init__(acoustic_handler)
 
@@ -39,6 +57,22 @@ class Adaptive_TDMA_MAC(Base_MAC):
         self.min_payload_builder = min_payload_builder
         self.K_select = int(K_select)
 
+        # Utility weights.
+        self.w_I = float(w_I)
+        self.w_q = float(w_q)
+        self.w_A = float(w_A)
+
+        # Range standard deviation used by the scheduling utility.
+        # If EKF R_range is variance, then sigma_d = sqrt(R_range).
+        self.sigma_d = float(sigma_d)
+
+        # Avoid singular geometry when two estimated positions are almost equal.
+        self.min_geom_range = float(min_geom_range)
+
+        # Optional covariance aging:
+        # P_hat_i = P_i_last + Q_pos * A_i
+        self.Q_pos = np.diag(np.asarray(Q_pos_diag, dtype=float).reshape(2))
+
         self.agents_order = []
 
         self.frame_id = -1
@@ -48,17 +82,33 @@ class Adaptive_TDMA_MAC(Base_MAC):
         self.active_modes = {}
         self.slot_table = []
 
+        # Backward-compatible quality table.
         self.q_table = {}
+
+        # Leader-side belief table used by the selector.
+        # belief_table[name] = {
+        #     "pos": np.ndarray shape (2,),
+        #     "P": np.ndarray shape (2, 2),
+        #     "q": float,
+        #     "last_time": float,
+        # }
+        self.belief_table = {}
+
+        # AoI table, currently zero in the centralized implementation.
+        self.aoi_table = {}
 
     # ----------------------------------------------------------
 
     def register_agents(self, agents):
+        agents = list(agents)
+
         super().register_agents(agents)
         self.agents_order = [a.name for a in agents]
 
-        # bootstrap: everyone sends min in first frame
-        #self.active_modes = {name: "min" for name in self.agents_order}
+        # Bootstrap: everyone sends NAV in the first frame.
+        # This initializes cooperative navigation information before adaptation.
         self.active_modes = {name: "nav" for name in self.agents_order}
+
         self._rebuild_slot_table()
         self.frame_id = 0
         self.frame_start_time = 0.0
@@ -90,7 +140,10 @@ class Adaptive_TDMA_MAC(Base_MAC):
         packet = self.queues[agent_name].popleft()
 
         if mode == "nav":
-            packet["payload_builder"] = self._build_nav_plus_min_wrapper(packet["agent"], sim)
+            packet["payload_builder"] = self._build_nav_plus_min_wrapper(
+                packet["agent"],
+                sim,
+            )
             packet["duration"] = self.min_duration + self.nav_duration
         else:
             packet["payload_builder"] = self.min_payload_builder
@@ -110,41 +163,282 @@ class Adaptive_TDMA_MAC(Base_MAC):
     # ----------------------------------------------------------
 
     def _update_q_table(self, sim):
-        for agent in sim.agents.values():
-            nav_info = getattr(agent, "nav_info", None)
-            if not nav_info:
-                continue
+        """
+        Update leader-side scheduling beliefs.
 
-            traceP = nav_info.get("traceP_pos", None)
-            if traceP is None:
+        Current implementation:
+        - centralized simulator access;
+        - reads each agent's current nav_state/nav_info directly.
+
+        Later, when dissemination/leader reception is implemented, this should
+        be changed so the leader belief is updated only from packets received
+        by the leader.
+        """
+        t_now = float(sim.time)
+
+        for agent in sim.agents.values():
+            nav_info = getattr(agent, "nav_info", {}) or {}
+            nav_state = getattr(agent, "nav_state", None)
+
+            if nav_state is None:
                 continue
 
             try:
-                traceP = float(traceP)
+                p = np.asarray(nav_state.x[:2], dtype=float).reshape(2)
+                P = np.asarray(nav_state.P[:2, :2], dtype=float)
             except Exception:
                 continue
 
-            if traceP > 0.0:
-                self.q_table[agent.name] = 1.0 / traceP
+            if P.shape != (2, 2):
+                continue
+
+            P = self._regularize_cov2(P)
+
+            traceP = float(nav_info.get("traceP_pos", np.trace(P)))
+            if not np.isfinite(traceP) or traceP <= 0.0:
+                traceP = float(np.trace(P))
+
+            q_i = 1.0 / traceP if traceP > 0.0 else 0.0
+
+            self.q_table[agent.name] = q_i
+
+            self.belief_table[agent.name] = {
+                "pos": p,
+                "P": P,
+                "q": q_i,
+                "last_time": t_now,
+            }
+
+            # In the current centralized version, all information is refreshed
+            # every frame, so AoI remains zero.
+            self.aoi_table[agent.name] = 0.0
 
     # ----------------------------------------------------------
 
     def _compute_modes_for_frame(self, sim):
+        """
+        H = 1 adaptive selector.
+
+        Select the NAV set S, |S| <= K_select, that maximizes:
+            J(S) =
+                w_I * sum_j DeltaU_j(S)
+              + w_q * sum_{i in S} q_hat_i
+              + w_A * sum_{i in S} A_i
+
+        The information gain term combines Fisher increments before computing
+        covariance trace reduction.
+        """
         modes = {name: "min" for name in self.agents_order}
 
-        ranked = sorted(
-            self.q_table.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )
+        if not self.agents_order:
+            return modes
 
-        selected = [name for name, _ in ranked[:self.K_select]]
-        selected = [name for name in selected if name in modes]
+        candidates = [
+            name for name in self.agents_order
+            if name in self.belief_table
+        ]
 
-        for name in selected:
+        if not candidates:
+            return modes
+
+        K = min(self.K_select, len(candidates))
+        if K <= 0:
+            return modes
+
+        best_set = []
+        best_score = -np.inf
+
+        # Exact subset search.
+        # Fine for N=4. For larger swarms, replace with greedy/lazy greedy.
+        for r in range(1, K + 1):
+            for subset in combinations(candidates, r):
+                score = self._score_nav_set(subset, sim)
+
+                if score > best_score:
+                    best_score = score
+                    best_set = list(subset)
+
+        for name in best_set:
             modes[name] = "nav"
 
         return modes
+
+    # ----------------------------------------------------------
+
+    def _score_nav_set(self, selected, sim):
+        """
+        Compute J(S) for one candidate NAV transmitter set S.
+
+        Parameters
+        ----------
+        selected : iterable[str]
+            Agent names scheduled to transmit NAV packets.
+        sim : object
+            Simulator handle.
+
+        Returns
+        -------
+        float
+            Utility score.
+        """
+        selected = list(selected)
+
+        info_gain = self._compute_information_gain(selected, sim)
+
+        q_gain = 0.0
+        aoi_gain = 0.0
+
+        t_now = float(sim.time)
+
+        for name in selected:
+            belief = self.belief_table.get(name)
+            if belief is None:
+                continue
+
+            P_hat = self._aged_covariance(name, t_now)
+            traceP = float(np.trace(P_hat))
+
+            q_hat = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
+            q_gain += q_hat
+
+            last_time = float(belief.get("last_time", t_now))
+            A_i = max(0.0, t_now - last_time)
+            aoi_gain += A_i
+
+        return (
+            self.w_I * info_gain
+            + self.w_q * q_gain
+            + self.w_A * aoi_gain
+        )
+
+    # ----------------------------------------------------------
+
+    def _compute_information_gain(self, selected, sim):
+        """
+        Combined Fisher information gain.
+
+        For each receiver j:
+            DeltaLambda_j(S) = sum_i DeltaLambda_ij
+            DeltaU_j(S) =
+                tr(P_j - inv(inv(P_j) + DeltaLambda_j))
+
+        This captures beacon complementarity. Two transmitters with nearly
+        identical bearing directions usually provide less additional information
+        than two transmitters with better angular separation.
+        """
+        selected = list(selected)
+        t_now = float(sim.time)
+
+        total_gain = 0.0
+
+        for receiver_name in self.agents_order:
+            if receiver_name not in self.belief_table:
+                continue
+
+            b_j = self.belief_table[receiver_name]
+
+            p_j = np.asarray(b_j["pos"], dtype=float).reshape(2)
+            P_j = self._aged_covariance(receiver_name, t_now)
+
+            try:
+                P_j_inv = np.linalg.inv(P_j)
+            except np.linalg.LinAlgError:
+                P_j = self._regularize_cov2(P_j)
+                P_j_inv = np.linalg.inv(P_j)
+
+            DeltaLambda_j = np.zeros((2, 2), dtype=float)
+
+            for sender_name in selected:
+                if sender_name == receiver_name:
+                    continue
+
+                if sender_name not in self.belief_table:
+                    continue
+
+                b_i = self.belief_table[sender_name]
+
+                p_i = np.asarray(b_i["pos"], dtype=float).reshape(2)
+                P_i = self._aged_covariance(sender_name, t_now)
+
+                delta = p_j - p_i
+                r = float(np.linalg.norm(delta))
+
+                if r < self.min_geom_range:
+                    continue
+
+                J_ij = (delta / r).reshape(1, 2)
+
+                S_ij = float(J_ij @ (P_j + P_i) @ J_ij.T)
+                S_ij += self.sigma_d ** 2
+
+                if not np.isfinite(S_ij) or S_ij <= 0.0:
+                    continue
+
+                DeltaLambda_ij = (J_ij.T @ J_ij) / S_ij
+                DeltaLambda_j += DeltaLambda_ij
+
+            if not np.all(np.isfinite(DeltaLambda_j)):
+                continue
+
+            try:
+                P_post = np.linalg.inv(P_j_inv + DeltaLambda_j)
+            except np.linalg.LinAlgError:
+                continue
+
+            gain_j = float(np.trace(P_j - P_post))
+
+            if np.isfinite(gain_j) and gain_j > 0.0:
+                total_gain += gain_j
+
+        return total_gain
+
+    # ----------------------------------------------------------
+
+    def _aged_covariance(self, name, t_now):
+        """
+        Optional AoI covariance aging:
+
+            P_hat_i = P_i_last + Q_pos * A_i
+
+        In the current centralized implementation, A_i is normally zero because
+        _update_q_table() refreshes all beliefs every frame.
+        """
+        belief = self.belief_table[name]
+
+        P = np.asarray(belief["P"], dtype=float)
+        P = self._regularize_cov2(P)
+
+        last_time = float(belief.get("last_time", t_now))
+        A_i = max(0.0, float(t_now) - last_time)
+
+        P_hat = P + self.Q_pos * A_i
+        return self._regularize_cov2(P_hat)
+
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def _regularize_cov2(P):
+        """
+        Make a 2x2 covariance symmetric positive definite enough for inversion.
+        """
+        P = np.asarray(P, dtype=float)
+
+        if P.shape != (2, 2):
+            P = np.eye(2, dtype=float)
+
+        P = 0.5 * (P + P.T)
+
+        eps = 1e-9
+
+        try:
+            eig_min = float(np.min(np.linalg.eigvalsh(P)))
+        except np.linalg.LinAlgError:
+            return np.eye(2, dtype=float)
+
+        if eig_min < eps:
+            P = P + np.eye(2) * (eps - eig_min)
+
+        return P
 
     # ----------------------------------------------------------
 
@@ -154,18 +448,21 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
         for name in self.agents_order:
             mode = self.active_modes.get(name, "min")
+
             if mode == "nav":
-                tx_dur = self.min_duration + self.nav_duration  
+                tx_dur = self.min_duration + self.nav_duration
             else:
                 tx_dur = self.min_duration
 
-            self.slot_table.append({
-                "agent": name,
-                "mode": mode,
-                "start": t0,
-                "tx_end": t0 + tx_dur,
-                "slot_end": t0 + tx_dur + self.guard_time,
-            })
+            self.slot_table.append(
+                {
+                    "agent": name,
+                    "mode": mode,
+                    "start": t0,
+                    "tx_end": t0 + tx_dur,
+                    "slot_end": t0 + tx_dur + self.guard_time,
+                }
+            )
 
             t0 += tx_dur + self.guard_time
 
@@ -178,7 +475,9 @@ class Adaptive_TDMA_MAC(Base_MAC):
             if slot["start"] <= t_frame < slot["tx_end"]:
                 return slot
         return None
-    
+
+    # ----------------------------------------------------------
+
     def _build_nav_plus_min_wrapper(self, agent, sim):
         def builder(agent_obj, tx_time):
             min_payload = self.min_payload_builder(agent_obj, tx_time)
@@ -187,6 +486,7 @@ class Adaptive_TDMA_MAC(Base_MAC):
             payload = dict(min_payload)
             payload.update(nav_payload)
             payload["type"] = "nav"
+
             return payload
 
         return builder

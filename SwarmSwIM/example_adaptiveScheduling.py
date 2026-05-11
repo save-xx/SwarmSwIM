@@ -443,6 +443,28 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
         print(f"Frame start: {MAC.frame_start_time:.3f}s")
         print(f"Frame id: {MAC.frame_id}")
 
+
+        selected = [n for n, m in MAC.active_modes.items() if m == "nav"]
+
+        print("\n--- Marginal geometric relevance ---")
+        for name in MAC.agents_order:
+            I_without = MAC._compute_information_gain(
+                [n for n in selected if n != name],
+                S,
+            )
+            I_with = MAC._compute_information_gain(
+                list(set(selected) | {name}),
+                S,
+            )
+            dI = I_with - I_without
+            mode = MAC.active_modes.get(name, "min")
+
+            print(
+                f"{name:>3} | "
+                f"mode={mode:>3} | "
+                f"dI_team={dI:8.4f}"
+            )   
+
         print()
 
         max_age = MAC.frame_duration
