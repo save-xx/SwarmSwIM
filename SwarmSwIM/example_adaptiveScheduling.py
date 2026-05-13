@@ -1,54 +1,45 @@
+from pathlib import Path
+import json
+
+import numpy as np
+
 from SwarmSwIM import Simulator
 from SwarmSwIM import activate_Acoustic, activate_Currents
 from SwarmSwIM import Visualizer2D
-from utility import futils
 
+from utility import utils
 from mac.adaptive_mac import Adaptive_TDMA_MAC
 from sensors.acoustic_ranging import AcousticRanging
 from navigation.ekf_nav import EKFNavFilter
 from navigation.fg_nav import FGNavFilter
 
-import json
-from pathlib import Path
 
-import numpy as np
-
+# =================================
+# Experiment configuration
+# =================================
 
 ranging = True
 log_str = "with_ranging" if ranging else "no_range"
 
 leader_id = "A02"
-K_select = 4
-
-
-def save_all_logs(nav_logs, coop_logs, coop_update_debug_logs):
-    futils.save_csv(nav_logs, LOG_DIR / log_str / "nav_log.csv")
-    futils.save_csv(coop_logs, LOG_DIR / log_str / "coop_log.csv")
-    futils.save_csv(coop_update_debug_logs, LOG_DIR / log_str / "coop_update_debug_log.csv")
-
-
-# =================================
-# Logging
-# =================================
+K_select = 2
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-nav_logs = []
-coop_logs = []
-coop_update_debug_logs = []
-
-# =================================
-# Simulation parameters
-# =================================
+SIM_STOP_TIME = 700.0
 
 ws_radius = 200
-
 fps_physics = 30
 fps_render = 30
 bps = 450
 PDR = 0.7
 c = 1500
+
+
+# =================================
+# Payload templates
+# =================================
 
 payload_nav_template = {
     "type": "nav",
@@ -67,6 +58,16 @@ payload_min_template = {
     "q": 0.0,
 }
 
+
+# =================================
+# Logs
+# =================================
+
+nav_logs = []
+coop_logs = []
+coop_update_debug_logs = []
+
+
 # =================================
 # Simulator
 # =================================
@@ -83,11 +84,10 @@ body_vels = {
 
 absolute_heading = [180, 180, 180, 180]
 
-i = 0
-for a in S.agents.values():
-    i += 1
-    a.set_VelocityCmd(body_vels[f"A0{i}"], mode="local_velocity")
-    a.set_Heading(absolute_heading[i - 1], mode="step")
+for i, agent in enumerate(S.agents.values()):
+    agent.set_VelocityCmd(body_vels[agent.name], mode="local_velocity")
+    agent.set_Heading(absolute_heading[i], mode="step")
+
 
 # =================================
 # Acoustic and ranging
@@ -95,6 +95,7 @@ for a in S.agents.values():
 
 ac_handle = activate_Acoustic(S, c, PDR)
 Ranging = AcousticRanging(sound_speed=c)
+
 
 # =================================
 # Packet durations
@@ -111,6 +112,7 @@ payload_min_bytes = json.dumps(payload_min_template).encode("utf-8")
 total_min_bits = (len(payload_min_bytes) + header_bytes) * 8
 tx_min_duration = total_min_bits / bps
 
+
 # =================================
 # MAC
 # =================================
@@ -121,15 +123,16 @@ MAC = Adaptive_TDMA_MAC(
     min_duration=tx_min_duration,
     guard_time=guard_time,
     leader_id=leader_id,
-    nav_payload_builder=futils.build_nav_payload,
-    min_payload_builder=futils.build_min_payload,
+    nav_payload_builder=utils.build_nav_payload,
+    min_payload_builder=utils.build_min_payload,
     K_select=K_select,
 )
 
 MAC.register_agents(S.agents.values())
 
+
 # =================================
-# Navigation filters
+# Navigation filter
 # =================================
 
 Nav = EKFNavFilter(
@@ -144,85 +147,33 @@ Nav = EKFNavFilter(
 
 Nav.register_agents(S.agents.values())
 
-# Store the true/base surface agents.
-# Temporarily promoted agents will be added/removed from Nav.surface_agents.
+# Store the true/base surface agents. Temporarily promoted agents are added/removed.
 base_surface_agents = set(Nav.surface_agents)
+utils.initialize_nav_agent_fields(S, Nav)
 
-for agent in S.agents.values():
-    st = Nav.get_state(agent)
-    agent.nav_state = st
-    agent.est_pos = st.x[:3].copy()
-    agent.est_heading = float(st.x[3])
-    agent.est_cov = st.P.copy()
 
 # =================================
 # Sporadic GPS-fix policy
 # =================================
 
-gps_fix_enabled = True
+gps_fix_enabled = False
 
-# q_i = 1 / trace(P_pos)
-# Low q_i means poor navigation quality.
-# This threshold triggers when trace(P_pos) > 5.0 m^2.
-gps_fix_q_thresh = 1.0 / 2.0
-
-# Duration for which an underwater agent is temporarily treated as a surface agent.
 gps_fix_duration = 1.0
-
-# Minimum time between two simulated GPS fixes for the same agent.
 gps_fix_cooldown = 300.0
 
 gps_fix_until = {}
 gps_fix_last = {}
 
+gps_fix_risk_thresh = 1.0
+gps_fix_traceP_ref = 2.0
+gps_fix_abs_age_ref = 300.0
+gps_fix_coop_age_ref = 60.0
+gps_fix_nis_ref = 9.0
 
-def update_sporadic_gps_fixes(S, Nav):
-    """
-    Temporarily add low-quality underwater agents to Nav.surface_agents.
-
-    This does not physically resurface the vehicle. It only allows
-    Nav.update_surface_position() to apply a noisy GPS XY correction
-    for a short time window.
-    """
-    if not gps_fix_enabled:
-        Nav.surface_agents = set(base_surface_agents)
-        return
-
-    t = float(S.time)
-
-    # Always start from the real/base surface agents.
-    active_surface_agents = set(base_surface_agents)
-
-    for agent in S.agents.values():
-        nav_info = getattr(agent, "nav_info", {}) or {}
-
-        traceP = float(nav_info.get("traceP_pos", np.inf))
-        q_i = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
-
-        active_until = gps_fix_until.get(agent.name, -np.inf)
-        last_fix = gps_fix_last.get(agent.name, -np.inf)
-
-        # Keep an already-triggered temporary GPS window active.
-        if t <= active_until:
-            active_surface_agents.add(agent.name)
-            continue
-
-        # Do not trigger extra GPS fixes for real surface agents.
-        if agent.name in base_surface_agents:
-            continue
-
-        # Trigger a new temporary GPS window if nav quality is poor.
-        if q_i < gps_fix_q_thresh and t - last_fix >= gps_fix_cooldown:
-            active_surface_agents.add(agent.name)
-            gps_fix_until[agent.name] = t + gps_fix_duration
-            gps_fix_last[agent.name] = t
-
-            print(
-                f"[GPS FIX] t={t:.2f}s | {agent.name} temporarily promoted "
-                f"to surface agent | q={q_i:.4f} | traceP={traceP:.4f}"
-            )
-
-    Nav.surface_agents = active_surface_agents
+gps_fix_w_traceP = 0.55
+gps_fix_w_abs_age = 0.25
+gps_fix_w_coop_age = 0.20
+gps_fix_w_nis = 0.00
 
 
 # =================================
@@ -238,6 +189,7 @@ properties = {
     "record": False,
 }
 
+
 # =================================
 # Initial bootstrap frame
 # =================================
@@ -245,12 +197,13 @@ properties = {
 for agent in S.agents.values():
     MAC.request_tx(
         agent,
-        payload_builder=futils.build_nav_payload,
+        payload_builder=utils.build_nav_payload,
         duration=tx_nav_duration,
     )
 
 frame = 1
 print_bootstrap = True
+
 
 # =================================
 # Navigation update rates
@@ -265,34 +218,23 @@ gps_update_dt = 1.0 / gps_update_hz
 next_local_update_time = 0.0
 next_gps_update_time = 0.0
 
+
 # =================================
 # Simulation callback
 # =================================
-
-count = 0
-
 
 def cycle(nav_logs, coop_logs, coop_update_debug_logs):
     global frame, print_bootstrap, next_local_update_time, next_gps_update_time
 
     prev_mac_frame_id = getattr(MAC, "frame_id", None)
 
-    # =================================
     # Physics step
-    # =================================
-
     S.tick()
 
-    # =================================
     # MAC step
-    # =================================
-
     delivered = MAC(S)
 
-    # =================================
     # Detect adaptive frame transition
-    # =================================
-
     new_frame = False
     curr_mac_frame_id = getattr(MAC, "frame_id", None)
 
@@ -306,189 +248,108 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
             for agent in S.agents.values():
                 MAC.request_tx(
                     agent,
-                    payload_builder=futils.build_nav_payload,
+                    payload_builder=utils.build_nav_payload,
                     duration=tx_nav_duration,
                 )
 
             frame += 1
 
-    # =================================
     # Ranging extraction
-    # =================================
-
     Ranging(S, delivered)
 
-    # =================================
-    # Navigation filter
-    # =================================
-
-    # Predict every simulator cycle
+    # Navigation prediction
     for agent in S.agents.values():
         Nav.predict(agent, S)
 
-    # Cooperative every cycle
+    # Cooperative updates
     if ranging:
         Nav.process_cooperative(S, delivered)
 
-    # Common local updates at 5 Hz
+    # Local updates
     if S.time + 1e-9 >= next_local_update_time:
         for agent in S.agents.values():
             Nav.update_local(agent, S)
         next_local_update_time += local_update_dt
 
-    # GPS/surface XY at 1 Hz
+    # GPS/surface XY updates
     if S.time + 1e-9 >= next_gps_update_time:
-        # Make nav_info current before checking q_i.
         if getattr(Nav, "writeback", False):
             Nav._writeback_all(S)
 
-        # Temporarily promote poor-quality underwater agents.
-        update_sporadic_gps_fixes(S, Nav)
+        utils.update_sporadic_gps_fixes(
+            sim=S,
+            nav=Nav,
+            base_surface_agents=base_surface_agents,
+            gps_fix_until=gps_fix_until,
+            gps_fix_last=gps_fix_last,
+            enabled=gps_fix_enabled,
+            duration=gps_fix_duration,
+            cooldown=gps_fix_cooldown,
+            risk_thresh=gps_fix_risk_thresh,
+            traceP_ref=gps_fix_traceP_ref,
+            abs_age_ref=gps_fix_abs_age_ref,
+            coop_age_ref=gps_fix_coop_age_ref,
+            nis_ref=gps_fix_nis_ref,
+            w_traceP=gps_fix_w_traceP,
+            w_abs_age=gps_fix_w_abs_age,
+            w_coop_age=gps_fix_w_coop_age,
+            w_nis=gps_fix_w_nis,
+        )
 
         for agent in S.agents.values():
             Nav.update_surface_position(agent, S)
 
-        # Write back again after possible GPS corrections.
         if getattr(Nav, "writeback", False):
             Nav._writeback_all(S)
 
         next_gps_update_time += gps_update_dt
 
-    # =================================
     # Logging
-    # =================================
+    utils.log_nav_step(S, Nav, S.agents, nav_logs)
+    utils.log_coop_events(S, delivered, Nav, coop_logs)
+    utils.log_coop_update_debug(Nav, coop_update_debug_logs)
 
-    futils.log_nav_step(S, Nav, S.agents, nav_logs)
-    futils.log_coop_events(S, delivered, Nav, coop_logs)
-    futils.log_coop_update_debug(Nav, coop_update_debug_logs)
-
-    # =================================
     # Visualization bookkeeping
-    # =================================
-
     visualizer.last_delivered = delivered
 
-    # =================================
-    # Print once per adaptive frame
-    # =================================
-
+    # Debug print once per adaptive frame
     if new_frame:
-        print(f"\n{'='*20} Adaptive Frame @ t={S.time:6.2f}s {'='*20}")
-
-        print("\n--- Positions ---")
-        for agent in S.agents.values():
-            print(
-                f"{agent.name:>3} | "
-                f"x={agent.pos[0]:8.3f}  "
-                f"y={agent.pos[1]:8.3f}  "
-                f"z={agent.pos[2]:6.3f}"
-            )
-
-        print("\n--- Estimation Error ---")
-        for agent in S.agents.values():
-            if not hasattr(agent, "nav_state"):
-                continue
-
-            st = agent.nav_state
-            err = st.x[:3] - agent.pos
-
-            print(
-                f"{agent.name:>3} | "
-                f"x_hat={np.array2string(st.x[:6], precision=3, floatmode='fixed', suppress_small=True, separator=' ')}"
-                f"ex={err[0]:7.3f}  "
-                f"ey={err[1]:7.3f}  "
-                f"ez={err[2]:7.3f}  "
-                f"| norm={np.linalg.norm(err):6.3f}"
-            )
-
-        print("\n--- GPS Fix State ---")
-        for agent in S.agents.values():
-            nav_info = getattr(agent, "nav_info", {}) or {}
-            traceP = float(nav_info.get("traceP_pos", np.inf))
-            q_i = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
-            is_surface = agent.name in Nav.surface_agents
-            is_base_surface = agent.name in base_surface_agents
-
-            print(
-                f"{agent.name:>3} | "
-                f"q={q_i:8.4f} | "
-                f"traceP={traceP:8.4f} | "
-                f"surface={is_surface} | "
-                f"base_surface={is_base_surface}"
-            )
-
-        print("\n--- MAC stats (adaptive) ---")
-        print(
-            f"TX={MAC.stats['tx']:3d} | "
-            f"RX_OK={MAC.stats['rx_success']:3d} | "
-            f"RX_LOST={MAC.stats['rx_lost']:3d} | "
-            f"COLL={MAC.stats['collisions']:3d} | "
-            f"DENIED={MAC.stats['denied']:3d}"
+        utils.print_adaptive_frame_report(
+            sim=S,
+            nav=Nav,
+            mac=MAC,
+            base_surface_agents=base_surface_agents,
         )
-
-        frame_report = MAC.get_frame_report()
-
-        print("\n--- Frame Report ---")
-        for tx in frame_report:
-            ok = len(tx["rx_success"])
-            lost = len(tx["rx_lost"])
-            print(
-                f"TX {tx['sender']:>3} | "
-                f"OK={ok:1d}  LOST={lost:1d} | "
-                f"t_tx={tx['tx_time']:8.3f}"
-            )
-
-        print(f"\nModes: {MAC.active_modes}")
-        print(f"Frame duration: {MAC.frame_duration:.3f}s")
-        print(f"Frame start: {MAC.frame_start_time:.3f}s")
-        print(f"Frame id: {MAC.frame_id}")
+        utils.prune_acoustic_ranges(S, max_age=MAC.frame_duration)
 
 
-        selected = [n for n, m in MAC.active_modes.items() if m == "nav"]
+def cycle_callback():
+    cycle(nav_logs, coop_logs, coop_update_debug_logs)
 
-        print("\n--- Marginal geometric relevance ---")
-        for name in MAC.agents_order:
-            I_without = MAC._compute_information_gain(
-                [n for n in selected if n != name],
-                S,
-            )
-            I_with = MAC._compute_information_gain(
-                list(set(selected) | {name}),
-                S,
-            )
-            dI = I_with - I_without
-            mode = MAC.active_modes.get(name, "min")
-
-            print(
-                f"{name:>3} | "
-                f"mode={mode:>3} | "
-                f"dI_team={dI:8.4f}"
-            )   
-
-        print()
-
-        max_age = MAC.frame_duration
-        for agent in S.agents.values():
-            if not hasattr(agent, "AcousticRange"):
-                continue
-
-            agent.AcousticRange = {
-                k: v for k, v in agent.AcousticRange.items()
-                if S.time - v["t_meas"] < max_age
-            }
+    if S.time >= SIM_STOP_TIME:
+        utils.finalize_and_exit(
+            sim=S,
+            nav_logs=nav_logs,
+            coop_logs=coop_logs,
+            coop_update_debug_logs=coop_update_debug_logs,
+            log_dir=LOG_DIR,
+            log_str=log_str,
+        )
 
 
 # =================================
 # Run visualizer
 # =================================
 
-def cycle_callback():
-    cycle(nav_logs, coop_logs, coop_update_debug_logs)
-
-
 visualizer = Visualizer2D(S, cycle_callback, properties, mac=MAC)
 
 try:
     visualizer.run()
 finally:
-    save_all_logs(nav_logs, coop_logs, coop_update_debug_logs)
+    utils.save_all_logs(
+        nav_logs,
+        coop_logs,
+        coop_update_debug_logs,
+        LOG_DIR,
+        log_str,
+    )

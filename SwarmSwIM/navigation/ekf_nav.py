@@ -53,7 +53,7 @@ class EKFNavFilter(BaseNavFilter):
         alpha=1.0,
         min_range=1e-2,
         sigma_rel_speed=0.2,
-        surface_agents=("A02",),
+        surface_agents=(),
         var_gps_fix=np.array([0.25, 0.25]),
         R_surface_pos_diag=(0.04, 0.04),
         history_length=1000,

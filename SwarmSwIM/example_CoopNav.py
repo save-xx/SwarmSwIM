@@ -1,7 +1,7 @@
 from SwarmSwIM import Simulator
 from SwarmSwIM import activate_Acoustic, activate_Currents, save_bag
 from SwarmSwIM import Visualizer2D
-from utility import futils
+from utility import utils
 
 from mac.tdma import TDMA_MAC
 from mac.adaptive_mac import Adaptive_TDMA_MAC
@@ -25,9 +25,9 @@ else:
 
 
 def save_all_logs(nav_logs,coop_logs,coop_update_debug_logs):
-    futils.save_csv(nav_logs, LOG_DIR / log_str /"nav_log.csv")
-    futils.save_csv(coop_logs, LOG_DIR / log_str /"coop_log.csv")
-    futils.save_csv(coop_update_debug_logs, LOG_DIR / log_str / "coop_update_debug_log.csv")
+    utils.save_csv(nav_logs, LOG_DIR / log_str /"nav_log.csv")
+    utils.save_csv(coop_logs, LOG_DIR / log_str /"coop_log.csv")
+    utils.save_csv(coop_update_debug_logs, LOG_DIR / log_str / "coop_update_debug_log.csv")
 
 # =================================
 # Logging
@@ -178,7 +178,7 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
         for agent in S.agents.values():
             MAC.request_tx(
                 agent,
-                payload_builder=futils.build_nav_payload,
+                payload_builder=utils.build_nav_payload,
                 duration=tx_duration
             )
         frame += 1
@@ -211,9 +211,9 @@ def cycle(nav_logs,coop_logs,coop_update_debug_logs):
     # =================================
     # Logging
     # =================================
-    futils.log_nav_step(S, Nav, S.agents, nav_logs)
-    futils.log_coop_events(S, delivered, Nav, coop_logs)
-    futils.log_coop_update_debug(Nav, coop_update_debug_logs)
+    utils.log_nav_step(S, Nav, S.agents, nav_logs)
+    utils.log_coop_events(S, delivered, Nav, coop_logs)
+    utils.log_coop_update_debug(Nav, coop_update_debug_logs)
 
 
     # =================================
