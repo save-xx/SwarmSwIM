@@ -40,19 +40,22 @@ class EKFNavFilter(BaseNavFilter):
 
     def __init__(
         self,
-        Q_diag=(0.01, 0.01, 0.0001, 0.03, 0.01, 0.02),
+        Q_diag=(0.05, 0.05, 0.0001, 0.05, 0.03, 0.03),
         P0_diag=(0.25, 0.25, 1e-4, 9.0, 0.01, 0.01),
         R_depth=1e-6,
         R_heading_deg=4.0,
         R_body_vel_diag=np.array([0.003, 0.003]),
-        R_range=0.01,
-        R_corr=0.5,
-        nis_gate=9.0,  # about 99.7%
-        # nis_gate=3.84: about 95% scalar chi-square gate
-        # nis_gate=6.63: about 99%
+        sigma_rel_speed=0.5,
+        R_range=0.25,
+        R_corr=1.0,
+        R_corr_q_adapt=True,
+        R_corr_q_ref=1.0,
+        R_corr_q_beta=1.0,
+        R_corr_min=0.1,
+        R_corr_max=10.0,
+        nis_gate=100,#9.5,
         alpha=1.0,
         min_range=1e-2,
-        sigma_rel_speed=0.2,
         surface_agents=(),
         var_gps_fix=np.array([0.25, 0.25]),
         R_surface_pos_diag=(0.04, 0.04),
@@ -69,13 +72,21 @@ class EKFNavFilter(BaseNavFilter):
         self.R_depth = float(R_depth)
         self.R_heading = float(R_heading_deg)
         self.R_body_vel = np.diag(np.asarray(R_body_vel_diag, dtype=float))
+
+        self.sigma_rel_speed = float(sigma_rel_speed)
         self.R_range = float(R_range)
         self.R_corr = float(R_corr)
+
+        self.R_corr_q_adapt = bool(R_corr_q_adapt)
+        self.R_corr_q_ref = float(R_corr_q_ref)
+        self.R_corr_q_beta = float(R_corr_q_beta)
+        self.R_corr_min = float(R_corr_min)
+        self.R_corr_max = float(R_corr_max)
+
         self.nis_gate = float(nis_gate)
 
         self.alpha = float(alpha)
         self.min_range = float(min_range)
-        self.sigma_rel_speed = float(sigma_rel_speed)
 
         self.surface_agents = set(surface_agents)
         self.P_gps_fix = np.diag(np.asarray(var_gps_fix, dtype=float))
@@ -227,8 +238,6 @@ class EKFNavFilter(BaseNavFilter):
 
         state.quality = float(np.trace(state.P[:3, :3]))
 
-        # Critical for delayed/OOSM cooperative updates:
-        # store GPS/surface XY measurement so replay does not erase it.
         if self.keep_history:
             self._append_history_snapshot(
                 state=state,
@@ -267,6 +276,10 @@ class EKFNavFilter(BaseNavFilter):
                 continue
             if "pos" not in payload or "cov" not in payload or "body_vel" not in payload:
                 continue
+
+            q_j = float(payload.get("q", np.nan))
+            if not np.isfinite(q_j) or q_j < 0.0:
+                q_j = np.nan
 
             t_meas = range_meas.get("t_meas", None)
             if t_meas is None:
@@ -309,6 +322,7 @@ class EKFNavFilter(BaseNavFilter):
                 t_now=float(sim.time),
                 t_tx=t_tx,
                 t_meas=t_meas,
+                q_j=q_j,
             )
 
             state.last_range_time[sender_name] = t_meas
@@ -333,6 +347,7 @@ class EKFNavFilter(BaseNavFilter):
         t_now,
         t_tx=np.nan,
         t_meas=np.nan,
+        q_j=np.nan,
     ):
         state = self.filters[receiver_name]
         P_pre_now = state.P.copy()
@@ -412,7 +427,11 @@ class EKFNavFilter(BaseNavFilter):
         )
 
         alpha_eff = 0.2 if sender_name in self.surface_agents else self.alpha
-        R_corr_eff = 0.1 if sender_name in self.surface_agents else self.R_corr
+
+        if sender_name in self.surface_agents:
+            R_corr_eff = self.R_corr_min
+        else:
+            R_corr_eff = self._adaptive_R_corr(q_j)
 
         R_sender = alpha_eff * float((H_j @ P_jj_meas[:3, :3] @ H_j.T)[0, 0])
         R_delay = float((self.sigma_rel_speed * packet_age) ** 2)
@@ -429,7 +448,51 @@ class EKFNavFilter(BaseNavFilter):
         nis = float((nu**2) / S)
 
         if nis > self.nis_gate:
+            self.coop_update_log.append(
+                {
+                    "t": float(t_now),
+                    "receiver": receiver_name,
+                    "sender": sender_name,
+                    "accepted": 0,
+                    "range": float(z_range),
+                    "r_hat": float(r_hat),
+                    "nu": float(nu),
+                    "nis": float(nis),
+                    "nis_gate": float(self.nis_gate),
+                    "S": float(S),
+                    "R_eff": float(R_eff),
+                    "R_sender": float(R_sender),
+                    "R_delay": float(R_delay),
+                    "R_corr_eff": float(R_corr_eff),
+                    "q_sender": float(q_j) if np.isfinite(q_j) else np.nan,
+                    "packet_age": float(packet_age),
+                    "t_tx_payload": float(t_tx),
+                    "t_meas": float(t_meas),
+                    "dt_sender": float(dt_j),
+                    "dt_receiver": float(t_now - t_meas),
+                    "sender_x_meas": float(p_j_meas[0]),
+                    "sender_y_meas": float(p_j_meas[1]),
+                    "sender_z_meas": float(p_j_meas[2]),
+                    "receiver_x_meas": float(x_i_meas[0]),
+                    "receiver_y_meas": float(x_i_meas[1]),
+                    "receiver_z_meas": float(x_i_meas[2]),
+                    "traceP_pre": float(np.trace(P_pre_now[:3, :3])),
+                    "traceP_receiver_meas": float(np.trace(P_ii_meas[:3, :3])),
+                    "traceP_sender_meas": float(np.trace(P_jj_meas[:3, :3])),
+                }
+            )
+
             print("rejected - nis gate")
+            print("receiver", receiver_name)
+            print("sender", sender_name)
+            print("nis", nis)
+            print("nu", nu)
+            print("S", S)
+            print("z_range", z_range, "r_hat", r_hat)
+            print("t_now", t_now, "t_tx", t_tx, "t_meas", t_meas, "packet_age", packet_age)
+            print("p_i_meas", p_i_meas, "p_j_meas", p_j_meas)
+            print("q_sender", q_j)
+            print("R_corr_eff", R_corr_eff)
             return
 
         K = (P_ii_meas @ H_i.T) / S
@@ -471,7 +534,6 @@ class EKFNavFilter(BaseNavFilter):
                 )
                 t_replay = t_k
 
-            # Replay standard local measurements.
             x_replay, P_replay = self._apply_local_measurements_to_state(
                 x_replay,
                 P_replay,
@@ -480,9 +542,6 @@ class EKFNavFilter(BaseNavFilter):
                 z_body_vel=np.asarray(entry["z_body_vel"], dtype=float),
             )
 
-            # Replay GPS/surface XY measurements if this snapshot contains one.
-            # This is the fix that prevents delayed acoustic updates from
-            # reconstructing the present state without the GPS correction.
             if "z_xy" in entry:
                 R_xy = entry.get("R_xy", self.R_surface_pos)
                 x_replay, P_replay = self._apply_surface_xy_measurement_to_state(
@@ -520,6 +579,10 @@ class EKFNavFilter(BaseNavFilter):
                 "nis_gate": float(self.nis_gate),
                 "S": float(S),
                 "R_eff": float(R_eff),
+                "R_sender": float(R_sender),
+                "R_delay": float(R_delay),
+                "R_corr_eff": float(R_corr_eff),
+                "q_sender": float(q_j) if np.isfinite(q_j) else np.nan,
                 "packet_age": float(packet_age),
                 "t_tx_payload": float(t_tx),
                 "t_meas": float(t_meas),
@@ -538,6 +601,30 @@ class EKFNavFilter(BaseNavFilter):
                 "traceP_post": float(np.trace(state.P[:3, :3])),
             }
         )
+
+    # ==========================================================
+    # Adaptive cooperative noise
+    # ==========================================================
+
+    def _adaptive_R_corr(self, q_j):
+        """
+        Adapt cooperative correlation/noise inflation using sender navigation quality.
+
+        Low q_j means the sender is poorly localized, therefore the cooperative
+        range update should be trusted less.
+        """
+        if not self.R_corr_q_adapt:
+            return float(self.R_corr)
+
+        if not np.isfinite(q_j) or q_j <= 0.0:
+            return float(self.R_corr_max)
+
+        scale = 1.0 + self.R_corr_q_beta * (
+            self.R_corr_q_ref / (q_j + 1e-12)
+        )
+
+        R_corr_eff = self.R_corr * scale
+        return float(np.clip(R_corr_eff, self.R_corr_min, self.R_corr_max))
 
     # ==========================================================
     # Transition model

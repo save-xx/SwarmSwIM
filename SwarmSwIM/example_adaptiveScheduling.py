@@ -19,10 +19,13 @@ from navigation.fg_nav import FGNavFilter
 # =================================
 
 ranging = True
+policy="tdma"
+policy="trivial"
+policy="adaptive"   # or "tdma" or "trivial"
 log_str = "with_ranging" if ranging else "no_range"
 
 leader_id = "A02"
-K_select = 2
+K_select = 4
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -83,6 +86,8 @@ body_vels = {
 }
 
 absolute_heading = [180, 180, 180, 180]
+absolute_heading = [70, 180, 225, 90]
+
 
 for i, agent in enumerate(S.agents.values()):
     agent.set_VelocityCmd(body_vels[agent.name], mode="local_velocity")
@@ -126,6 +131,7 @@ MAC = Adaptive_TDMA_MAC(
     nav_payload_builder=utils.build_nav_payload,
     min_payload_builder=utils.build_min_payload,
     K_select=K_select,
+    policy=policy,
 )
 
 MAC.register_agents(S.agents.values())
@@ -334,6 +340,7 @@ def cycle_callback():
             coop_update_debug_logs=coop_update_debug_logs,
             log_dir=LOG_DIR,
             log_str=log_str,
+            policy=policy
         )
 
 
@@ -352,4 +359,5 @@ finally:
         coop_update_debug_logs,
         LOG_DIR,
         log_str,
+        policy,
     )

@@ -7,14 +7,18 @@ import numpy as np
 def build_nav_payload(agent, tx_time):
     st = agent.nav_state
 
+    traceP = float(np.trace(st.P[:3, :3]))
+    q_i = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
+
     return {
         "type": "nav",
         "id": agent.name,
         "tx_time": tx_time,
+        "q": float(q_i),
         "pos": st.x[:3].tolist(),
         "heading": float(st.x[3]),
         "cov": np.diag(st.P[:3, :3]).tolist(),
-        "body_vel": st.x[4:6].tolist()
+        "body_vel": st.x[4:6].tolist(),
     }
 
 def build_min_payload(agent, tx_time):
@@ -166,18 +170,19 @@ from pathlib import Path
 import numpy as np
 
 
-def save_all_logs(nav_logs, coop_logs, coop_update_debug_logs, log_dir, log_str):
+def save_all_logs(nav_logs, coop_logs, coop_update_debug_logs, log_dir, log_str, policy):
     """
     Save all simulation logs using the existing save_csv() function.
     """
     log_dir = Path(log_dir)
+    
 
-    save_csv(nav_logs, log_dir / log_str / "nav_log.csv")
-    save_csv(coop_logs, log_dir / log_str / "coop_log.csv")
-    save_csv(
+    save_csv(nav_logs, log_dir / log_str / f"nav_log-{policy}.csv")
+    save_csv(coop_logs, log_dir / log_str / f"coop_log-{policy}.csv")
+    '''save_csv(
         coop_update_debug_logs,
-        log_dir / log_str / "coop_update_debug_log.csv",
-    )
+        log_dir / log_str / f"coop_update_debug_log_{policy}.csv",
+    )'''
 
 
 def initialize_nav_agent_fields(sim, nav):
@@ -380,7 +385,20 @@ def print_adaptive_frame_report(
     print(f"Frame duration: {mac.frame_duration:.3f}s")
     print(f"Frame start: {mac.frame_start_time:.3f}s")
 
-    if print_geometry and hasattr(mac, "_compute_information_gain"):
+    print("\n--- MAC selection terms ---")
+    print(
+        f"S={mac.last_selected_set} | "
+        f"I={mac.last_selection_terms['info_gain']:.4f} | "
+        f"q={mac.last_selection_terms['q_gain']:.4f} | "
+        f"A={mac.last_selection_terms['aoi_gain']:.4f} | "
+        f"cost={mac.last_selection_terms['nav_cost']:.4f} | "
+        f"J={mac.last_selection_terms['score']:.4f}"
+        )
+    print("MAC weights:", mac.w_I, mac.w_q, mac.w_A, mac.w_T)
+    print("selected:", mac.last_selected_set, "K=", len(mac.last_selected_set))
+    print("terms:", mac.last_selection_terms)
+
+    '''if print_geometry and hasattr(mac, "_compute_information_gain"):
         selected = [n for n, m in mac.active_modes.items() if m == "nav"]
 
         print("\n--- Marginal geometric relevance ---")
@@ -400,7 +418,7 @@ def print_adaptive_frame_report(
                 f"{name:>3} | "
                 f"mode={mode:>3} | "
                 f"dI_team={dI:8.4f}"
-            )
+            )'''
 
     print()
 
@@ -412,6 +430,7 @@ def finalize_and_exit(
     coop_update_debug_logs,
     log_dir,
     log_str,
+    policy,
 ):
     """
     Save logs and stop the simulation.
@@ -422,6 +441,7 @@ def finalize_and_exit(
         coop_update_debug_logs,
         log_dir,
         log_str,
+        policy,
     )
 
     print(f"[STOP] Simulation reached t={sim.time:.2f}s")

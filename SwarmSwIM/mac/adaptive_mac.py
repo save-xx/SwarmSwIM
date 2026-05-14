@@ -14,13 +14,19 @@ class Adaptive_TDMA_MAC(Base_MAC):
     - fixed leader
     - H = 1 adaptive selector
 
-    Current policy:
-    - leader selects NAV transmitters by maximizing a utility that includes:
-        1) expected cooperative navigation information gain,
-        2) transmitter navigation quality,
-        3) Age of Information term.
-    - all other agents send MIN.
-    - frame duration changes according to selected packet modes.
+    Policy:
+    - every agent always transmits at least MIN;
+    - scheduler decides which agents upgrade to NAV;
+    - K_select is the maximum number of NAV upgrades, not a fixed number;
+    - selected NAV set is found by exact subset search:
+          S* = argmax_{S subset N, |S| <= K_select} J(S)
+
+    Objective:
+        J(S) =
+            w_I * information_gain(S)
+          + w_q * quality_gain(S)
+          + w_A * AoI_gain(S)
+          - w_T * |S|
 
     Notes
     -----
@@ -38,13 +44,15 @@ class Adaptive_TDMA_MAC(Base_MAC):
         leader_id,
         nav_payload_builder,
         min_payload_builder,
+        policy,
         K_select=2,
         w_I=1.0,
         w_q=1.0,
         w_A=0.0,
-        sigma_d=0.1,
+        w_T=1.0,
+        sigma_d=0.5,
         min_geom_range=1e-3,
-        Q_pos_diag=(0.01, 0.01),
+        Q_pos_diag=(0.05, 0.05),
     ):
         super().__init__(acoustic_handler)
 
@@ -55,12 +63,24 @@ class Adaptive_TDMA_MAC(Base_MAC):
         self.leader_id = str(leader_id)
         self.nav_payload_builder = nav_payload_builder
         self.min_payload_builder = min_payload_builder
+
+        self.policy = str(policy)
+
+        # Maximum number of NAV upgrades per frame.
+        # Actual number is selected by subset optimization.
         self.K_select = int(K_select)
 
         # Utility weights.
-        self.w_I = float(w_I)
+        if self.policy == "trivial":
+            self.w_I = 0.0
+        else:
+            self.w_I = float(w_I)
         self.w_q = float(w_q)
         self.w_A = float(w_A)
+
+        # Cost of adding one NAV extension.
+        # This is the term that allows the optimizer to select fewer than K_select.
+        self.w_T = float(w_T)
 
         # Range standard deviation used by the scheduling utility.
         # If EKF R_range is variance, then sigma_d = sqrt(R_range).
@@ -96,6 +116,17 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
         # AoI table, currently zero in the centralized implementation.
         self.aoi_table = {}
+
+        # Debug/inspection info from latest scheduling decision.
+        self.last_selected_set = []
+        self.last_selection_score = 0.0
+        self.last_selection_terms = {
+            "info_gain": 0.0,
+            "q_gain": 0.0,
+            "aoi_gain": 0.0,
+            "nav_cost": 0.0,
+            "score": 0.0,
+        }
 
     # ----------------------------------------------------------
 
@@ -214,20 +245,25 @@ class Adaptive_TDMA_MAC(Base_MAC):
             self.aoi_table[agent.name] = 0.0
 
     # ----------------------------------------------------------
-
     def _compute_modes_for_frame(self, sim):
         """
-        H = 1 adaptive selector.
+        H = 1 exact subset selector.
 
-        Select the NAV set S, |S| <= K_select, that maximizes:
-            J(S) =
-                w_I * sum_j DeltaU_j(S)
-              + w_q * sum_{i in S} q_hat_i
-              + w_A * sum_{i in S} A_i
+        Every agent sends MIN.
+        The optimizer chooses which agents upgrade to NAV.
 
-        The information gain term combines Fisher increments before computing
-        covariance trace reduction.
+        It solves:
+            S* = argmax J(S)
+            subject to |S| <= K_select
+
+        The search includes the empty set, so if NAV is not worth its cost,
+        all agents remain in MIN mode.
         """
+        if self.policy == "tdma":
+            self.last_selected_set = list(self.agents_order)
+            return {name: "nav" for name in self.agents_order}
+
+
         modes = {name: "min" for name in self.agents_order}
 
         if not self.agents_order:
@@ -239,27 +275,39 @@ class Adaptive_TDMA_MAC(Base_MAC):
         ]
 
         if not candidates:
+            self.last_selected_set = []
+            self.last_selection_terms = self._score_nav_set_terms([], sim)
+            self.last_selection_score = self.last_selection_terms["score"]
             return modes
 
-        K = min(self.K_select, len(candidates))
-        if K <= 0:
-            return modes
+        K_max = min(self.K_select, len(candidates))
+        if K_max < 0:
+            K_max = 0
 
+        # Start with empty set. This allows the optimizer to choose zero NAV
+        # upgrades if all NAV extensions are not worth their communication cost.
         best_set = []
-        best_score = -np.inf
+        best_terms = self._score_nav_set_terms([], sim)
+        best_score = best_terms["score"]
 
-        # Exact subset search.
-        # Fine for N=4. For larger swarms, replace with greedy/lazy greedy.
-        for r in range(1, K + 1):
+        # Exact subset search over all |S| <= K_max.
+        # For N=4, this is only 16 subsets if K_max=4.
+        for r in range(1, K_max + 1):
             for subset in combinations(candidates, r):
-                score = self._score_nav_set(subset, sim)
+                terms = self._score_nav_set_terms(subset, sim)
+                score = terms["score"]
 
                 if score > best_score:
                     best_score = score
                     best_set = list(subset)
+                    best_terms = terms
 
         for name in best_set:
             modes[name] = "nav"
+
+        self.last_selected_set = best_set
+        self.last_selection_score = float(best_score)
+        self.last_selection_terms = best_terms
 
         return modes
 
@@ -267,19 +315,19 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
     def _score_nav_set(self, selected, sim):
         """
-        Compute J(S) for one candidate NAV transmitter set S.
+        Return scalar J(S).
+        Kept for compatibility with existing debug code.
+        """
+        return self._score_nav_set_terms(selected, sim)["score"]
 
-        Parameters
-        ----------
+    # ----------------------------------------------------------
+
+    def _score_nav_set_terms(self, selected, sim):
+        """
+        Compute objective terms for one candidate NAV-upgrade set S.
+
         selected : iterable[str]
-            Agent names scheduled to transmit NAV packets.
-        sim : object
-            Simulator handle.
-
-        Returns
-        -------
-        float
-            Utility score.
+            Agents upgraded from MIN to NAV.
         """
         selected = list(selected)
 
@@ -305,11 +353,22 @@ class Adaptive_TDMA_MAC(Base_MAC):
             A_i = max(0.0, t_now - last_time)
             aoi_gain += A_i
 
-        return (
+        nav_cost = self.w_T * len(selected)
+
+        score = (
             self.w_I * info_gain
             + self.w_q * q_gain
             + self.w_A * aoi_gain
+            - nav_cost
         )
+
+        return {
+            "info_gain": float(info_gain),
+            "q_gain": float(q_gain),
+            "aoi_gain": float(aoi_gain),
+            "nav_cost": float(nav_cost),
+            "score": float(score),
+        }
 
     # ----------------------------------------------------------
 
@@ -322,13 +381,16 @@ class Adaptive_TDMA_MAC(Base_MAC):
             DeltaU_j(S) =
                 tr(P_j - inv(inv(P_j) + DeltaLambda_j))
 
-        This captures beacon complementarity. Two transmitters with nearly
-        identical bearing directions usually provide less additional information
-        than two transmitters with better angular separation.
+        This is a set function, not an independent per-agent ranking.
+        Therefore, the marginal value of one transmitter depends on the other
+        transmitters already included in S.
         """
         selected = list(selected)
-        t_now = float(sim.time)
 
+        if len(selected) == 0:
+            return 0.0
+
+        t_now = float(sim.time)
         total_gain = 0.0
 
         for receiver_name in self.agents_order:

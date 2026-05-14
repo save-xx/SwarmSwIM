@@ -102,11 +102,11 @@
             -->
             <wave1>
                 <!-- Peak intensity of current disturbance in m/s -->
-                <amplitude> 2.0 </amplitude> <!-- 0.6, 10.0, 0.1 -->
+                <amplitude> 1.0 </amplitude> <!-- 2.0 -->
                 <!-- Wavelength in m -->
-                <wavelength> 10.0 </wavelength>
+                <wavelength> 1.0 </wavelength>
                 <!-- Wave advancement velocity in m/s -->
-                <wavespeed> 0.05 </wavespeed>
+                <wavespeed> 1.0 </wavespeed>
                 <!-- Direction of advancement of waves and direction of current contribution [degree] -->
                 <direction> 85 </direction>
                 <!-- Time shift of wave [0,2pi] -->

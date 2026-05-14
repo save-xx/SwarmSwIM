@@ -6,19 +6,24 @@ import matplotlib.pyplot as plt
 # "with_ranging"
 # "no_range"
 
-ranging = False
+ranging = True
 if ranging:
     log_str = "with_ranging"
 else:
     log_str = "no_range"
 
+policy="tdma"
+#policy="trivial"
+policy="adaptive"   # or "tdma" or "trivial"
+
 LOG_DIR = Path("logs")
 
-NAV_FILE = LOG_DIR / log_str / "nav_log.csv"
-COOP_FILE = LOG_DIR / log_str / "coop_log.csv"
-COOP_DEBUG_FILE = LOG_DIR / log_str / "coop_update_debug_log.csv"
 
-FIG_DIR = LOG_DIR / log_str / "figures"
+NAV_FILE = LOG_DIR / log_str / f"nav_log-{policy}.csv"
+COOP_FILE = LOG_DIR / log_str / f"coop_log-{policy}.csv"
+COOP_DEBUG_FILE = LOG_DIR / log_str / f"coop_update_debug_log_{policy}.csv"
+
+FIG_DIR = LOG_DIR / log_str / f"figures-{policy}.csv"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 

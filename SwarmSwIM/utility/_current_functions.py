@@ -105,14 +105,60 @@ def calculate_global_waves(time_S , waves):
 
 
 def calculate_local_waves(time_S, agent, waves):
-    """Generate a position and time dependant wave current."""
-    # Unpacking
-    total_current = np.array([0.,0.])
+    """Generate slow local current using XML only for direction/shift."""
+    total_current = np.array([0.0, 0.0], dtype=float)
+
+    # Effective disturbance parameters controlled here.
+    amp_eff = 0.15          # m/s
+    wavelength_eff = 40.0   # m
+    wavespeed_eff = 0.01    # m/s
+
+    lateral_ratio = 0.25
+    max_current = 0.60
+
+    agent_bias = {
+        "A01": np.array([ 0.0,  0.0], dtype=float),
+        "A02": np.array([ 0.0,  0.0], dtype=float),
+        "A03": np.array([ 0.0,  0.0], dtype=float),
+        "A04": np.array([ 0.0,  0.0], dtype=float),
+    }
+
+    '''agent_bias = {
+    "A01": np.array([ 0.04, -0.02]),
+    "A02": np.array([ 0.00,  0.00]),
+    "A03": np.array([-0.03,  0.03]),
+    "A04": np.array([ 0.02,  0.04]),
+    }'''
+
+    k_eff = 2.0 * np.pi / wavelength_eff
+    w_eff = k_eff * wavespeed_eff
+
+    x = float(agent.pos[0])
+    y = float(agent.pos[1])
+
     for wave_param in waves:
-        versor = wave_param['_versor']
-        pos = agent.pos[0]*versor[0]+agent.pos[1]*versor[1]
-        force = (wave_param['amplitude'] * 
-                 np.sin(wave_param['_w'] * time_S + wave_param['_k']*pos + wave_param['shift']))
-        current = np.array([force*versor[0], force*versor[1]])
-        total_current += current
+        versor = np.asarray(wave_param["_versor"], dtype=float).reshape(2)
+        lateral = np.array([-versor[1], versor[0]], dtype=float)
+
+        pos_parallel = x * versor[0] + y * versor[1]
+        shift = float(wave_param.get("shift", 0.0))
+
+        phase = w_eff * time_S + k_eff * pos_parallel + shift
+
+        total_current += amp_eff * np.sin(phase) * versor
+
+        total_current += (
+            lateral_ratio
+            * amp_eff
+            * np.cos(0.7 * phase + 0.03 * x + 0.05 * y)
+            * lateral
+        )
+
+    total_current += agent_bias.get(agent.name, np.zeros(2, dtype=float))
+
+    if max_current is not None and max_current > 0.0:
+        n = float(np.linalg.norm(total_current))
+        if n > max_current:
+            total_current *= max_current / n
+
     return total_current

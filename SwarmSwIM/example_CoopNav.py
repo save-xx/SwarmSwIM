@@ -89,7 +89,8 @@ body_vels = {
     "A03": [0.3, 0.0],
     "A04": [0.5, 0.0]
 }
-absolute_heading = [180, 180, 180, 180]
+#absolute_heading = [180, 180, 180, 180]
+absolute_heading = [135, 180, 225, 180]
 
 i = 0
 for a in S.agents.values():
