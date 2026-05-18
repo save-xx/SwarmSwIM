@@ -132,7 +132,7 @@ class BaseNavFilter(ABC):
 
         self.post_step(sim, delivered)
         stop = time.time()
-        print('process time',stop - start)
+        #print('process time',stop - start) # commented to keep terminal clean
 
         return self.filters
 

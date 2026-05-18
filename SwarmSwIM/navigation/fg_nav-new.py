@@ -43,7 +43,7 @@ class FGNavFilter(BaseNavFilter):
         writeback=True,
         keep_history=True,
         rng_seed=50,
-        fg_time_horizon=10.0,
+        fg_time_horizon=120.0, # changed from 10 s to 120, 10 is way too low.
         max_range_events=2000000,
         max_gps_events=20000000,
         min_fg_nodes=2,
@@ -337,9 +337,9 @@ class FGNavFilter(BaseNavFilter):
         lbg = []
         ubg = []
 
-        v_max = 1.0
-        d_min = 3.0
-
+        v_max = 3.0 # changed from 1.0 to 3.0 m/s as current AUV speed is 1 m/s
+        d_min = 1.0 # changed from 3.0 to 1.0 as its just for collision.
+ 
         ref = [self._reference_xy_at_time(st, t) for t in times]
 
         # Keep the original initial-position anchor.
