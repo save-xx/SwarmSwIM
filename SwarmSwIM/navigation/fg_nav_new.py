@@ -342,9 +342,20 @@ class FGNavFilter(BaseNavFilter):
  
         ref = [self._reference_xy_at_time(st, t) for t in times]
 
-        # Keep the original initial-position anchor.
-        # This is not a moving anchor at the start of the current window.
-        prior_xy = st.x0_xy.copy()
+        # Anchor the first node of the current sliding window.
+        #
+        # If the window still starts at t=0, use the true initial position.
+        # Otherwise, use a moving prior at the window start:
+        #   1. previous FG solution interpolated at times[0], if available;
+        #   2. otherwise the recursive DR/history reference at times[0].
+        #
+        # This avoids incorrectly forcing xk(0) toward the launch position
+        # after the sliding window has moved forward in time.
+        prior_xy = self._window_start_prior_xy(
+            st=st,
+            t_start=times[0],
+            ref_xy=ref[0],
+        )
 
         r0 = (xk(0) - prior_xy) / self.fg_sigma_prior
         J += casadi.dot(r0, r0)
@@ -541,6 +552,40 @@ class FGNavFilter(BaseNavFilter):
                 out.append(t)
 
         return out
+    
+    def _window_start_prior_xy(self, st, t_start, ref_xy):
+        """
+        Return the prior position for the first node of the current FG window.
+
+        If the window starts at t=0, use the original initialization anchor.
+        If the window has moved forward, use a moving prior at the window start:
+        - previous optimized FG trajectory, if available;
+        - otherwise recursive DR/history interpolation.
+        """
+        t_start = float(t_start)
+
+        # If the current window still includes the true initial time,
+        # the original initial-position anchor is still valid.
+        if abs(t_start) <= 1e-9:
+            return st.x0_xy.copy()
+
+        # Prefer the previous optimized FG trajectory as the moving prior.
+        if st.fg_last_solution:
+            xy = self._interpolate_solution(st.fg_last_solution, t_start)
+
+            if xy is not None:
+                xy = np.asarray(xy, dtype=float).reshape(2)
+                if np.all(np.isfinite(xy)):
+                    return xy.copy()
+
+        # Fallback: use the recursive/dead-reckoning history reference.
+        xy = np.asarray(ref_xy, dtype=float).reshape(2)
+
+        if np.all(np.isfinite(xy)):
+            return xy.copy()
+
+        # Last-resort fallback. This should almost never be used.
+        return st.x[:2].copy()
 
     def _build_initial_guess(self, st, times, ref):
         """

@@ -430,7 +430,7 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
                 J_ij = (delta / r).reshape(1, 2)
 
-                S_ij = float(J_ij @ (P_j + P_i) @ J_ij.T)
+                S_ij = float((J_ij @ (P_j + P_i) @ J_ij.T).item())
                 S_ij += self.sigma_d ** 2
 
                 if not np.isfinite(S_ij) or S_ij <= 0.0:
