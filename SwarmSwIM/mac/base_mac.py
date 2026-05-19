@@ -40,6 +40,9 @@ class Base_MAC(ABC):
         # active transmissions waiting for completion
         self._active_tx = {}
 
+        # transmissions attempted during the latest MAC step
+        self.tx_events = []
+
         # number of agents
         self._n_agents = 0
 
@@ -79,6 +82,8 @@ class Base_MAC(ABC):
 
     def __call__(self, sim):
 
+        self.tx_events = []
+
         # scheduling decision
         self._schedule(sim)
 
@@ -117,6 +122,24 @@ class Base_MAC(ABC):
         payload = payload_builder(agent, sim.time)
 
         success, status = self.acoustic.send(agent, payload, duration)
+        payload_type = None
+        payload_id = None
+
+        if isinstance(payload, dict):
+            payload_type = payload.get("type")
+            payload_id = payload.get("id")
+
+        self.tx_events.append(
+            {
+                "sender": agent.name,
+                "payload_type": payload_type,
+                "payload_id": payload_id,
+                "tx_time": float(sim.time),
+                "duration": float(duration),
+                "status": status,
+                "success": bool(success),
+            }
+        )
 
         if success:
 
