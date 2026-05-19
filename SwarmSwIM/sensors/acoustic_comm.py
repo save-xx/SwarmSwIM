@@ -49,6 +49,7 @@ def activate_Acoustic(
     acoustic_name="acoustic",
     agent_selection: list[str] | None = None,
     pdr_sender=None,
+    pdr=None,
     ):
     """
     Activate an acoustic communication channel plugin for a simulation.
@@ -83,6 +84,10 @@ def activate_Acoustic(
       operations, so no manual updating is required.
     - Output is logged into the bag in an `acoustic_name` page 
     """
+    if isinstance(acoustic_name, (int, float)):
+        pdr = acoustic_name
+        acoustic_name = "acoustic"
+
     # Create the acoustic channel instance
     acoustic_inst = AcousticChannel(
         simulation,
@@ -90,6 +95,7 @@ def activate_Acoustic(
         acoustic_name,
         agent_selection,
         pdr_sender=pdr_sender,
+        pdr=pdr,
         )
     # Ensure simulation memory is active
     if not simulation.has_memory:
@@ -109,6 +115,7 @@ class AcousticChannel:
         agent_selection: list[str] | None = None,
         max_range=MAX_RANGE,
         pdr_sender=None,
+        pdr=None,
     ):
         # private parameters to bag
         self._event_to_save = {}
@@ -120,7 +127,8 @@ class AcousticChannel:
         self.MAX_RANGE = max_range
         self.channel_name = channel_name
 
-        # packet dlivery ratio
+        # packet delivery ratio
+        self.pdr = 1.0 if pdr is None else float(np.clip(float(pdr), 0.0, 1.0))
         self.pdr_sender = dict(pdr_sender) if pdr_sender is not None else {}
 
         # collection of active messages
@@ -153,7 +161,7 @@ class AcousticChannel:
 
         If the sender is not listed, use the global default PDR.
         """
-        pdr = self.pdr_sender.get(sender_name)
+        pdr = self.pdr_sender.get(sender_name, self.pdr)
         return float(np.clip(float(pdr), 0.0, 1.0))
 
 
