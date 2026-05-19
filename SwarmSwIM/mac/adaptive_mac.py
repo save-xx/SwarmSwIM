@@ -28,6 +28,9 @@ class Adaptive_TDMA_MAC(Base_MAC):
           + w_A * AoI_gain(S)
           - w_T * |S|
 
+    Link-quality-aware information gain:
+        DeltaLambda_ij_eff = p_success_i * DeltaLambda_ij
+
     Notes
     -----
     Dissemination is not implemented here.
@@ -53,6 +56,7 @@ class Adaptive_TDMA_MAC(Base_MAC):
         sigma_d=0.5,
         min_geom_range=1e-3,
         Q_pos_diag=(0.05, 0.05),
+        sender_pdr_prior=None,
     ):
         super().__init__(acoustic_handler)
 
@@ -66,6 +70,21 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
         self.policy = str(policy)
 
+        if sender_pdr_prior is None:
+            raise ValueError("sender_pdr_prior must be provided.")
+
+        self.sender_pdr_prior = {
+            str(name): float(pdr)
+            for name, pdr in dict(sender_pdr_prior).items()
+        }
+
+        for name, pdr in self.sender_pdr_prior.items():
+            if not np.isfinite(pdr) or pdr < 0.0 or pdr > 1.0:
+                raise ValueError(
+                    f"Invalid sender PDR prior for {name}: {pdr}. "
+                    "Expected value in [0, 1]."
+                )
+
         # Maximum number of NAV upgrades per frame.
         # Actual number is selected by subset optimization.
         self.K_select = int(K_select)
@@ -75,6 +94,7 @@ class Adaptive_TDMA_MAC(Base_MAC):
             self.w_I = 0.0
         else:
             self.w_I = float(w_I)
+
         self.w_q = float(w_q)
         self.w_A = float(w_A)
 
@@ -135,6 +155,16 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
         super().register_agents(agents)
         self.agents_order = [a.name for a in agents]
+
+        missing_pdr = [
+            name for name in self.agents_order
+            if name not in self.sender_pdr_prior
+        ]
+
+        if missing_pdr:
+            raise ValueError(
+                f"Missing sender PDR prior for agents: {missing_pdr}"
+            )
 
         # Bootstrap: everyone sends NAV in the first frame.
         # This initializes cooperative navigation information before adaptation.
@@ -245,6 +275,7 @@ class Adaptive_TDMA_MAC(Base_MAC):
             self.aoi_table[agent.name] = 0.0
 
     # ----------------------------------------------------------
+
     def _compute_modes_for_frame(self, sim):
         """
         H = 1 exact subset selector.
@@ -262,7 +293,6 @@ class Adaptive_TDMA_MAC(Base_MAC):
         if self.policy == "tdma":
             self.last_selected_set = list(self.agents_order)
             return {name: "nav" for name in self.agents_order}
-
 
         modes = {name: "min" for name in self.agents_order}
 
@@ -377,9 +407,11 @@ class Adaptive_TDMA_MAC(Base_MAC):
         Combined Fisher information gain.
 
         For each receiver j:
-            DeltaLambda_j(S) = sum_i DeltaLambda_ij
+            DeltaLambda_j(S) = sum_i p_i * DeltaLambda_ij
             DeltaU_j(S) =
                 tr(P_j - inv(inv(P_j) + DeltaLambda_j))
+
+        where p_i is the known sender-level PDR prior.
 
         This is a set function, not an independent per-agent ranking.
         Therefore, the marginal value of one transmitter depends on the other
@@ -436,7 +468,9 @@ class Adaptive_TDMA_MAC(Base_MAC):
                 if not np.isfinite(S_ij) or S_ij <= 0.0:
                     continue
 
-                DeltaLambda_ij = (J_ij.T @ J_ij) / S_ij
+                p_success_i = self._get_sender_success_prior(sender_name)
+
+                DeltaLambda_ij = p_success_i * (J_ij.T @ J_ij) / S_ij
                 DeltaLambda_j += DeltaLambda_ij
 
             if not np.all(np.isfinite(DeltaLambda_j)):
@@ -475,6 +509,17 @@ class Adaptive_TDMA_MAC(Base_MAC):
 
         P_hat = P + self.Q_pos * A_i
         return self._regularize_cov2(P_hat)
+
+    # ----------------------------------------------------------
+
+    def _get_sender_success_prior(self, sender_name):
+        """
+        Known sender-level packet delivery probability used by the scheduler.
+        """
+        if sender_name not in self.sender_pdr_prior:
+            raise KeyError(f"No sender PDR prior assigned for {sender_name}")
+
+        return float(self.sender_pdr_prior[sender_name])
 
     # ----------------------------------------------------------
 
