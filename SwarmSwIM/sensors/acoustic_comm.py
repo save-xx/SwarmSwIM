@@ -43,10 +43,13 @@ class AgentChannel:
     sync_gap: float = 0.0
 
 
-def activate_Acoustic(simulation,c,pdr,  #(andrea)
-                      acoustic_name="acoustic", 
-                      agent_selection: list[str] | None = None
-                      ):
+def activate_Acoustic(
+    simulation,
+    c,
+    acoustic_name="acoustic",
+    agent_selection: list[str] | None = None,
+    pdr_sender=None,
+    ):
     """
     Activate an acoustic communication channel plugin for a simulation.
 
@@ -81,7 +84,13 @@ def activate_Acoustic(simulation,c,pdr,  #(andrea)
     - Output is logged into the bag in an `acoustic_name` page 
     """
     # Create the acoustic channel instance
-    acoustic_inst = AcousticChannel(simulation, c, pdr, acoustic_name, agent_selection)
+    acoustic_inst = AcousticChannel(
+        simulation,
+        c,
+        acoustic_name,
+        agent_selection,
+        pdr_sender=pdr_sender,
+        )
     # Ensure simulation memory is active
     if not simulation.has_memory:
         simulation.enable_memory()
@@ -93,12 +102,14 @@ def activate_Acoustic(simulation,c,pdr,  #(andrea)
 
 class AcousticChannel:
     def __init__(
-        self, 
-        simulation, c_sound, PDR,
-        channel_name = "acoustic",
+        self,
+        simulation,
+        c_sound,
+        channel_name="acoustic",
         agent_selection: list[str] | None = None,
-        max_range = MAX_RANGE
-        ):
+        max_range=MAX_RANGE,
+        pdr_sender=None,
+    ):
         # private parameters to bag
         self._event_to_save = {}
         self._sent_to_save = []
@@ -110,7 +121,7 @@ class AcousticChannel:
         self.channel_name = channel_name
 
         # packet dlivery ratio
-        self.PDR = PDR
+        self.pdr_sender = dict(pdr_sender) if pdr_sender is not None else {}
 
         # collection of active messages
         self.active_msgs = {}
@@ -135,6 +146,15 @@ class AcousticChannel:
         data += self.rnd.normal(scale=error[1])
 
         return data
+    
+    def _get_sender_pdr(self, sender_name):
+        """
+        Return sender-specific packet delivery probability.
+
+        If the sender is not listed, use the global default PDR.
+        """
+        pdr = self.pdr_sender.get(sender_name)
+        return float(np.clip(float(pdr), 0.0, 1.0))
 
 
     def generate_agents_dict(self, simulation, agent_selection):
@@ -358,8 +378,10 @@ class AcousticChannel:
             incoming.intact = True
             incoming.pos_at_detection = copy.deepcopy(agent.pos)
 
-            # --- ADD NATURAL PACKET LOSS HERE --- (andrea)
-            if self.rnd.random() > self.PDR:     # PDR in [0,1]
+            # Sender-dependent packet loss
+            sender_pdr = self._get_sender_pdr(msg["sender"])
+
+            if self.rnd.random() > sender_pdr:
                 incoming.intact = False
                 incoming.payload = None
         else:  

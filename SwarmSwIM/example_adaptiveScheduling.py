@@ -19,9 +19,15 @@ from navigation.fg_nav import FGNavFilter
 # =================================
 
 ranging = True
-policy="tdma"
-policy="trivial"
-policy="adaptive"   # or "tdma" or "trivial"
+
+heading_bias = True
+if not ranging:
+    policy="DR"
+else:
+    policy="tdma"
+    #policy="trivial"
+    #policy="adaptive" 
+
 log_str = "with_ranging" if ranging else "no_range"
 
 leader_id = "A02"
@@ -36,7 +42,13 @@ ws_radius = 200
 fps_physics = 30
 fps_render = 30
 bps = 450
-PDR = 0.7
+
+pdr_sender = {
+    "A01": 0.6,
+    "A02": 0.6,   # surface/reference, reliable
+    "A03": 0.6,   # geometrically useful but unreliable
+    "A04": 0.6,   # geometrically useful but unreliable
+}
 c = 1500
 
 
@@ -80,14 +92,24 @@ activate_Currents(S)
 
 body_vels = {
     "A01": [0.2, 0.0],
-    "A02": [0.6, 0.0],
+    "A02": [0.5, 0.0],
     "A03": [0.3, 0.0],
-    "A04": [0.5, 0.0],
+    "A04": [0.4, 0.0],
+}
+
+
+# Degrees. Keep small/realistic.
+heading_bias_deg = {
+    "A01": 0.0,
+    "A02": 0.0,   # surface/reference
+    "A03": 4.0,
+    "A04": -3.0,
 }
 
 absolute_heading = [180, 180, 180, 180]
-absolute_heading = [70, 180, 225, 90]
-
+#absolute_heading = [70, 180, 225, 90]
+#absolute_heading = [180, 180, 180, 270]
+#absolute_heading = [90, 90, 90, 180]
 
 for i, agent in enumerate(S.agents.values()):
     agent.set_VelocityCmd(body_vels[agent.name], mode="local_velocity")
@@ -98,7 +120,11 @@ for i, agent in enumerate(S.agents.values()):
 # Acoustic and ranging
 # =================================
 
-ac_handle = activate_Acoustic(S, c, PDR)
+ac_handle = activate_Acoustic(
+    S,
+    c,
+    pdr_sender=pdr_sender,
+)
 Ranging = AcousticRanging(sound_speed=c)
 
 
@@ -107,7 +133,7 @@ Ranging = AcousticRanging(sound_speed=c)
 # =================================
 
 guard_time = 2 * ws_radius / c
-header_bytes = 8
+header_bytes = 12
 
 payload_nav_bytes = json.dumps(payload_nav_template).encode("utf-8")
 total_nav_bits = (len(payload_nav_bytes) + header_bytes) * 8
@@ -132,6 +158,7 @@ MAC = Adaptive_TDMA_MAC(
     min_payload_builder=utils.build_min_payload,
     K_select=K_select,
     policy=policy,
+    sender_pdr_prior=pdr_sender,
 )
 
 MAC.register_agents(S.agents.values())
@@ -225,17 +252,25 @@ next_local_update_time = 0.0
 next_gps_update_time = 0.0
 
 
+dynamic_scenario_enabled = True
+_last_scenario_phase = None
+_last_scenario_phase = utils.update_dynamic_scenario(S, MAC, ac_handle, dynamic_scenario_enabled, _last_scenario_phase)
+
+
 # =================================
 # Simulation callback
 # =================================
 
 def cycle(nav_logs, coop_logs, coop_update_debug_logs):
-    global frame, print_bootstrap, next_local_update_time, next_gps_update_time
+    global frame, print_bootstrap, next_local_update_time, next_gps_update_time, _last_scenario_phase
 
     prev_mac_frame_id = getattr(MAC, "frame_id", None)
 
     # Physics step
     S.tick()
+
+    # Dynamic scenario update
+    _last_scenario_phase  = utils.update_dynamic_scenario(S, MAC, ac_handle, dynamic_scenario_enabled, _last_scenario_phase)
 
     # MAC step
     delivered = MAC(S)
@@ -273,6 +308,7 @@ def cycle(nav_logs, coop_logs, coop_update_debug_logs):
 
     # Local updates
     if S.time + 1e-9 >= next_local_update_time:
+        utils.apply_heading_measurement_bias(S,heading_bias,heading_bias_deg)
         for agent in S.agents.values():
             Nav.update_local(agent, S)
         next_local_update_time += local_update_dt

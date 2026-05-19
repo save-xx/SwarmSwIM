@@ -1,0 +1,590 @@
+from itertools import combinations
+
+import numpy as np
+
+from .base_mac import Base_MAC
+
+
+class Adaptive_TDMA_MAC(Base_MAC):
+    """
+    Adaptive TDMA with:
+    - fixed slot order
+    - variable slot duration
+    - two payload modes: min / nav
+    - fixed leader
+    - H = 1 adaptive selector
+
+    Policy:
+    - every agent always transmits at least MIN;
+    - scheduler decides which agents upgrade to NAV;
+    - K_select is the maximum number of NAV upgrades, not a fixed number;
+    - selected NAV set is found by exact subset search:
+          S* = argmax_{S subset N, |S| <= K_select} J(S)
+
+    Objective:
+        J(S) =
+            w_I * information_gain(S)
+          + w_q * quality_gain(S)
+          + w_A * AoI_gain(S)
+          - w_T * |S|
+
+    Notes
+    -----
+    Dissemination is not implemented here.
+    The current simulator implementation assumes the MAC object directly knows
+    the selected modes and applies them centrally.
+    """
+
+    def __init__(
+        self,
+        acoustic_handler,
+        nav_duration,
+        min_duration,
+        guard_time,
+        leader_id,
+        nav_payload_builder,
+        min_payload_builder,
+        policy,
+        K_select=2,
+        w_I=1.0,
+        w_q=1.0,
+        w_A=0.0,
+        w_T=1.0,
+        sigma_d=0.5,
+        min_geom_range=1e-3,
+        Q_pos_diag=(0.05, 0.05),
+        sender_pdr_prior=None,
+    ):
+        super().__init__(acoustic_handler)
+
+        self.nav_duration = float(nav_duration)
+        self.min_duration = float(min_duration)
+        self.guard_time = float(guard_time)
+
+        self.leader_id = str(leader_id)
+        self.nav_payload_builder = nav_payload_builder
+        self.min_payload_builder = min_payload_builder
+
+        self.policy = str(policy)
+
+        if sender_pdr_prior is None:
+            raise ValueError("sender_pdr_prior must be provided.")
+
+        self.sender_pdr_prior = {
+            str(name): float(pdr)
+            for name, pdr in dict(sender_pdr_prior).items()
+        }
+
+        for name, pdr in self.sender_pdr_prior.items():
+            if not np.isfinite(pdr) or pdr < 0.0 or pdr > 1.0:
+                raise ValueError(
+                    f"Invalid sender PDR prior for {name}: {pdr}. Expected value in [0, 1]."
+                )
+
+        # Maximum number of NAV upgrades per frame.
+        # Actual number is selected by subset optimization.
+        self.K_select = int(K_select)
+
+        # Utility weights.
+        if self.policy == "trivial":
+            self.w_I = 0.0
+        else:
+            self.w_I = float(w_I)
+        self.w_q = float(w_q)
+        self.w_A = float(w_A)
+
+        # Cost of adding one NAV extension.
+        # This is the term that allows the optimizer to select fewer than K_select.
+        self.w_T = float(w_T)
+
+        # Range standard deviation used by the scheduling utility.
+        # If EKF R_range is variance, then sigma_d = sqrt(R_range).
+        self.sigma_d = float(sigma_d)
+
+        # Avoid singular geometry when two estimated positions are almost equal.
+        self.min_geom_range = float(min_geom_range)
+
+        # Optional covariance aging:
+        # P_hat_i = P_i_last + Q_pos * A_i
+        self.Q_pos = np.diag(np.asarray(Q_pos_diag, dtype=float).reshape(2))
+
+        self.agents_order = []
+
+        self.frame_id = -1
+        self.frame_start_time = 0.0
+        self.frame_duration = 0.0
+
+        self.active_modes = {}
+        self.slot_table = []
+
+        # Backward-compatible quality table.
+        self.q_table = {}
+
+        # Leader-side belief table used by the selector.
+        # belief_table[name] = {
+        #     "pos": np.ndarray shape (2,),
+        #     "P": np.ndarray shape (2, 2),
+        #     "q": float,
+        #     "last_time": float,
+        # }
+        self.belief_table = {}
+
+        # AoI table, currently zero in the centralized implementation.
+        self.aoi_table = {}
+
+        # Debug/inspection info from latest scheduling decision.
+        self.last_selected_set = []
+        self.last_selection_score = 0.0
+        self.last_selection_terms = {
+            "info_gain": 0.0,
+            "q_gain": 0.0,
+            "aoi_gain": 0.0,
+            "nav_cost": 0.0,
+            "score": 0.0,
+        }
+
+    # ----------------------------------------------------------
+
+    def register_agents(self, agents):
+        agents = list(agents)
+
+        super().register_agents(agents)
+        self.agents_order = [a.name for a in agents]
+        missing_pdr = [
+            name for name in self.agents_order
+            if name not in self.sender_pdr_prior
+        ]
+
+        if missing_pdr:
+            raise ValueError(
+                f"Missing sender PDR prior for agents: {missing_pdr}"
+            )
+
+        # Bootstrap: everyone sends NAV in the first frame.
+        # This initializes cooperative navigation information before adaptation.
+        self.active_modes = {name: "nav" for name in self.agents_order}
+
+        self._rebuild_slot_table()
+        self.frame_id = 0
+        self.frame_start_time = 0.0
+
+    # ----------------------------------------------------------
+
+    def _schedule(self, sim):
+        if not self.agents_order:
+            return
+
+        t = float(sim.time)
+
+        while t >= self.frame_start_time + self.frame_duration - 1e-12:
+            self.frame_start_time += self.frame_duration
+            self._start_new_frame(sim)
+
+        t_frame = t - self.frame_start_time
+
+        slot = self._find_active_slot(t_frame)
+        if slot is None:
+            return
+
+        agent_name = slot["agent"]
+        mode = slot["mode"]
+
+        if not self.queues[agent_name]:
+            return
+
+        packet = self.queues[agent_name].popleft()
+
+        if mode == "nav":
+            packet["payload_builder"] = self._build_nav_plus_min_wrapper(
+                packet["agent"],
+                sim,
+            )
+            packet["duration"] = self.min_duration + self.nav_duration
+        else:
+            packet["payload_builder"] = self.min_payload_builder
+            packet["duration"] = self.min_duration
+
+        self._attempt_tx(sim, packet)
+
+    # ----------------------------------------------------------
+
+    def _start_new_frame(self, sim):
+        self.frame_id += 1
+
+        self._update_q_table(sim)
+        self.active_modes = self._compute_modes_for_frame(sim)
+        self._rebuild_slot_table()
+
+    # ----------------------------------------------------------
+
+    def _update_q_table(self, sim):
+        """
+        Update leader-side scheduling beliefs.
+
+        Current implementation:
+        - centralized simulator access;
+        - reads each agent's current nav_state/nav_info directly.
+
+        Later, when dissemination/leader reception is implemented, this should
+        be changed so the leader belief is updated only from packets received
+        by the leader.
+        """
+        t_now = float(sim.time)
+
+        for agent in sim.agents.values():
+            nav_info = getattr(agent, "nav_info", {}) or {}
+            nav_state = getattr(agent, "nav_state", None)
+
+            if nav_state is None:
+                continue
+
+            try:
+                p = np.asarray(nav_state.x[:2], dtype=float).reshape(2)
+                P = np.asarray(nav_state.P[:2, :2], dtype=float)
+            except Exception:
+                continue
+
+            if P.shape != (2, 2):
+                continue
+
+            P = self._regularize_cov2(P)
+
+            traceP = float(nav_info.get("traceP_pos", np.trace(P)))
+            if not np.isfinite(traceP) or traceP <= 0.0:
+                traceP = float(np.trace(P))
+
+            q_i = 1.0 / traceP if traceP > 0.0 else 0.0
+
+            self.q_table[agent.name] = q_i
+
+            self.belief_table[agent.name] = {
+                "pos": p,
+                "P": P,
+                "q": q_i,
+                "last_time": t_now,
+            }
+
+            # In the current centralized version, all information is refreshed
+            # every frame, so AoI remains zero.
+            self.aoi_table[agent.name] = 0.0
+
+    # ----------------------------------------------------------
+    def _compute_modes_for_frame(self, sim):
+        """
+        H = 1 exact subset selector.
+
+        Every agent sends MIN.
+        The optimizer chooses which agents upgrade to NAV.
+
+        It solves:
+            S* = argmax J(S)
+            subject to |S| <= K_select
+
+        The search includes the empty set, so if NAV is not worth its cost,
+        all agents remain in MIN mode.
+        """
+        if self.policy == "tdma":
+            self.last_selected_set = list(self.agents_order)
+            return {name: "nav" for name in self.agents_order}
+
+
+        modes = {name: "min" for name in self.agents_order}
+
+        if not self.agents_order:
+            return modes
+
+        candidates = [
+            name for name in self.agents_order
+            if name in self.belief_table
+        ]
+
+        if not candidates:
+            self.last_selected_set = []
+            self.last_selection_terms = self._score_nav_set_terms([], sim)
+            self.last_selection_score = self.last_selection_terms["score"]
+            return modes
+
+        K_max = min(self.K_select, len(candidates))
+        if K_max < 0:
+            K_max = 0
+
+        # Start with empty set. This allows the optimizer to choose zero NAV
+        # upgrades if all NAV extensions are not worth their communication cost.
+        best_set = []
+        best_terms = self._score_nav_set_terms([], sim)
+        best_score = best_terms["score"]
+
+        # Exact subset search over all |S| <= K_max.
+        # For N=4, this is only 16 subsets if K_max=4.
+        for r in range(1, K_max + 1):
+            for subset in combinations(candidates, r):
+                terms = self._score_nav_set_terms(subset, sim)
+                score = terms["score"]
+
+                if score > best_score:
+                    best_score = score
+                    best_set = list(subset)
+                    best_terms = terms
+
+        for name in best_set:
+            modes[name] = "nav"
+
+        self.last_selected_set = best_set
+        self.last_selection_score = float(best_score)
+        self.last_selection_terms = best_terms
+
+        return modes
+
+    # ----------------------------------------------------------
+
+    def _score_nav_set(self, selected, sim):
+        """
+        Return scalar J(S).
+        Kept for compatibility with existing debug code.
+        """
+        return self._score_nav_set_terms(selected, sim)["score"]
+
+    # ----------------------------------------------------------
+
+    def _score_nav_set_terms(self, selected, sim):
+        """
+        Compute objective terms for one candidate NAV-upgrade set S.
+
+        selected : iterable[str]
+            Agents upgraded from MIN to NAV.
+        """
+        selected = list(selected)
+
+        info_gain = self._compute_information_gain(selected, sim)
+
+        q_gain = 0.0
+        aoi_gain = 0.0
+
+        t_now = float(sim.time)
+
+        for name in selected:
+            belief = self.belief_table.get(name)
+            if belief is None:
+                continue
+
+            P_hat = self._aged_covariance(name, t_now)
+            traceP = float(np.trace(P_hat))
+
+            q_hat = 1.0 / traceP if traceP > 0.0 and np.isfinite(traceP) else 0.0
+            q_gain += q_hat
+
+            last_time = float(belief.get("last_time", t_now))
+            A_i = max(0.0, t_now - last_time)
+            aoi_gain += A_i
+
+        nav_cost = self.w_T * len(selected)
+
+        score = (
+            self.w_I * info_gain
+            + self.w_q * q_gain
+            + self.w_A * aoi_gain
+            - nav_cost
+        )
+
+        return {
+            "info_gain": float(info_gain),
+            "q_gain": float(q_gain),
+            "aoi_gain": float(aoi_gain),
+            "nav_cost": float(nav_cost),
+            "score": float(score),
+        }
+
+    # ----------------------------------------------------------
+
+    def _compute_information_gain(self, selected, sim):
+        """
+        Combined Fisher information gain.
+
+        For each receiver j:
+            DeltaLambda_j(S) = sum_i DeltaLambda_ij
+            DeltaU_j(S) =
+                tr(P_j - inv(inv(P_j) + DeltaLambda_j))
+
+        This is a set function, not an independent per-agent ranking.
+        Therefore, the marginal value of one transmitter depends on the other
+        transmitters already included in S.
+        """
+        selected = list(selected)
+
+        if len(selected) == 0:
+            return 0.0
+
+        t_now = float(sim.time)
+        total_gain = 0.0
+
+        for receiver_name in self.agents_order:
+            if receiver_name not in self.belief_table:
+                continue
+
+            b_j = self.belief_table[receiver_name]
+
+            p_j = np.asarray(b_j["pos"], dtype=float).reshape(2)
+            P_j = self._aged_covariance(receiver_name, t_now)
+
+            try:
+                P_j_inv = np.linalg.inv(P_j)
+            except np.linalg.LinAlgError:
+                P_j = self._regularize_cov2(P_j)
+                P_j_inv = np.linalg.inv(P_j)
+
+            DeltaLambda_j = np.zeros((2, 2), dtype=float)
+
+            for sender_name in selected:
+                if sender_name == receiver_name:
+                    continue
+
+                if sender_name not in self.belief_table:
+                    continue
+
+                b_i = self.belief_table[sender_name]
+
+                p_i = np.asarray(b_i["pos"], dtype=float).reshape(2)
+                P_i = self._aged_covariance(sender_name, t_now)
+
+                delta = p_j - p_i
+                r = float(np.linalg.norm(delta))
+
+                if r < self.min_geom_range:
+                    continue
+
+                J_ij = (delta / r).reshape(1, 2)
+
+                S_ij = float(J_ij @ (P_j + P_i) @ J_ij.T)
+                S_ij += self.sigma_d ** 2
+
+                if not np.isfinite(S_ij) or S_ij <= 0.0:
+                    continue
+
+                p_success_i = self._get_sender_success_prior(sender_name)
+
+                DeltaLambda_ij = p_success_i * (J_ij.T @ J_ij) / S_ij
+                DeltaLambda_j += DeltaLambda_ij
+
+
+            if not np.all(np.isfinite(DeltaLambda_j)):
+                continue
+
+            try:
+                P_post = np.linalg.inv(P_j_inv + DeltaLambda_j)
+            except np.linalg.LinAlgError:
+                continue
+
+            gain_j = float(np.trace(P_j - P_post))
+
+            if np.isfinite(gain_j) and gain_j > 0.0:
+                total_gain += gain_j
+
+        return total_gain
+
+    # ----------------------------------------------------------
+
+    def _aged_covariance(self, name, t_now):
+        """
+        Optional AoI covariance aging:
+
+            P_hat_i = P_i_last + Q_pos * A_i
+
+        In the current centralized implementation, A_i is normally zero because
+        _update_q_table() refreshes all beliefs every frame.
+        """
+        belief = self.belief_table[name]
+
+        P = np.asarray(belief["P"], dtype=float)
+        P = self._regularize_cov2(P)
+
+        last_time = float(belief.get("last_time", t_now))
+        A_i = max(0.0, float(t_now) - last_time)
+
+        P_hat = P + self.Q_pos * A_i
+        return self._regularize_cov2(P_hat)
+    
+    def _get_sender_success_prior(self, sender_name):
+        """
+        Known sender-level packet delivery probability used by the scheduler.
+        """
+        if sender_name not in self.sender_pdr_prior:
+            raise KeyError(f"No sender PDR prior assigned for {sender_name}")
+
+        return float(self.sender_pdr_prior[sender_name])
+
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def _regularize_cov2(P):
+        """
+        Make a 2x2 covariance symmetric positive definite enough for inversion.
+        """
+        P = np.asarray(P, dtype=float)
+
+        if P.shape != (2, 2):
+            P = np.eye(2, dtype=float)
+
+        P = 0.5 * (P + P.T)
+
+        eps = 1e-9
+
+        try:
+            eig_min = float(np.min(np.linalg.eigvalsh(P)))
+        except np.linalg.LinAlgError:
+            return np.eye(2, dtype=float)
+
+        if eig_min < eps:
+            P = P + np.eye(2) * (eps - eig_min)
+
+        return P
+
+    # ----------------------------------------------------------
+
+    def _rebuild_slot_table(self):
+        self.slot_table = []
+        t0 = 0.0
+
+        for name in self.agents_order:
+            mode = self.active_modes.get(name, "min")
+
+            if mode == "nav":
+                tx_dur = self.min_duration + self.nav_duration
+            else:
+                tx_dur = self.min_duration
+
+            self.slot_table.append(
+                {
+                    "agent": name,
+                    "mode": mode,
+                    "start": t0,
+                    "tx_end": t0 + tx_dur,
+                    "slot_end": t0 + tx_dur + self.guard_time,
+                }
+            )
+
+            t0 += tx_dur + self.guard_time
+
+        self.frame_duration = t0
+
+    # ----------------------------------------------------------
+
+    def _find_active_slot(self, t_frame):
+        for slot in self.slot_table:
+            if slot["start"] <= t_frame < slot["tx_end"]:
+                return slot
+        return None
+
+    # ----------------------------------------------------------
+
+    def _build_nav_plus_min_wrapper(self, agent, sim):
+        def builder(agent_obj, tx_time):
+            min_payload = self.min_payload_builder(agent_obj, tx_time)
+            nav_payload = self.nav_payload_builder(agent_obj, tx_time)
+
+            payload = dict(min_payload)
+            payload.update(nav_payload)
+            payload["type"] = "nav"
+
+            return payload
+
+        return builder

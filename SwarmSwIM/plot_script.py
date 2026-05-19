@@ -13,7 +13,7 @@ else:
     log_str = "no_range"
 
 policy="tdma"
-#policy="trivial"
+policy="trivial"
 policy="adaptive"   # or "tdma" or "trivial"
 
 LOG_DIR = Path("logs")

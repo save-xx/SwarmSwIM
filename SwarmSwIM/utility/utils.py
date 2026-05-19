@@ -33,6 +33,208 @@ def build_min_payload(agent, tx_time):
         "q": q_i,
     }
 
+def apply_heading_measurement_bias(sim,heading_bias,bias_deg):
+    """
+    Apply agent-specific magnetometer/heading bias to the measurement
+    consumed by the EKF local update.
+
+    This does not change the commanded heading or true vehicle motion.
+    """
+    if not heading_bias:
+        return
+
+    for agent in sim.agents.values():
+        bias = float(bias_deg.get(agent.name, 0.0))
+
+        # Use true/current simulator heading as unbiased baseline.
+        # This avoids accumulating bias on an already biased measured_heading.
+        h = float(agent.psi)
+
+        agent.measured_heading = (h + bias + 180.0) % 360.0 - 180.0
+
+        agent.measured_heading = (h + bias + 180.0) % 360.0 - 180.0
+
+def set_sender_pdr(ac_handle, mac, new_pdr):
+    """
+    Update link-quality model in the acoustic channel and in the MAC scheduler.
+
+    Assumes you added pdr_sender support in activate_Acoustic/acoustic channel
+    and sender_pdr_prior support in Adaptive_TDMA_MAC.
+    """
+    global pdr_sender
+
+    pdr_sender = dict(new_pdr)
+
+    # Acoustic channel side.
+    if hasattr(ac_handle, "pdr_sender"):
+        ac_handle.pdr_sender = dict(new_pdr)
+    elif hasattr(ac_handle, "PDR_SENDER"):
+        ac_handle.PDR_SENDER = dict(new_pdr)
+
+    # Scheduler side.
+    if hasattr(mac, "sender_pdr_prior"):
+        mac.sender_pdr_prior = dict(new_pdr)
+
+
+def set_agent_headings(sim, heading_dict):
+    for agent in sim.agents.values():
+        if agent.name in heading_dict:
+            agent.set_Heading(float(heading_dict[agent.name]), mode="step")
+
+
+def update_dynamic_scenario(sim, mac, ac_handle, dynamic_scenario_enabled, _last_scenario_phase):
+    """
+    Piecewise scenario:
+    - Phase 0: parallel motion, homogeneous links/sensors.
+    - Phase 1: geometry changes.
+    - Phase 2: one underwater link degrades and A03 heading quality worsens.
+    - Phase 3: link/sensor recovery but new geometry.
+    """
+
+    if not dynamic_scenario_enabled:
+        return
+
+    t = float(sim.time)
+
+    if t < 200.0:
+        phase = 0
+    elif t < 350.0:
+        phase = 1
+    elif t < 500.0:
+        phase = 2
+    else:
+        phase = 3
+
+    if phase == _last_scenario_phase:
+        return
+
+    _last_scenario_phase = phase
+
+    if phase == 0:
+        set_agent_headings(
+            sim,
+            {
+                "A01": 180.0,
+                "A02": 180.0,
+                "A03": 180.0,
+                "A04": 180.0,
+            },
+        )
+
+        heading_bias_deg = {
+            "A01": 0.0,
+            "A02": 0.0,
+            "A03": 3.0,
+            "A04": -2.0,
+        }
+
+        set_sender_pdr(
+            ac_handle,
+            mac,
+            {
+                "A01": 0.5,
+                "A02": 0.5,
+                "A03": 0.5,
+                "A04": 0.5,
+            },
+        )
+
+    elif phase == 1:
+        # Geometry becomes informative: A03/A04 become angularly different.
+        set_agent_headings(
+            sim,
+            {
+                "A01": 180.0,
+                "A02": 180.0,
+                "A03": 225.0,
+                "A04": 90.0,
+            },
+        )
+
+        heading_bias_deg = {
+            "A01": 0.0,
+            "A02": 0.0,
+            "A03": 3.0,
+            "A04": -2.0,
+        }
+
+        set_sender_pdr(
+            ac_handle,
+            mac,
+            {
+                "A01": 0.5,
+                "A02": 0.5,
+                "A03": 0.5,
+                "A04": 0.5,
+            },
+        )
+
+    elif phase == 2:
+        # A03 becomes geometrically useful but unreliable / worse heading.
+        # A02 remains usable as the surface anchor.
+        set_agent_headings(
+            sim,
+            {
+                "A01": 180.0,
+                "A02": 180.0,
+                "A03": 225.0,
+                "A04": 90.0,
+            },
+        )
+
+        heading_bias_deg = {
+            "A01": 0.0,
+            "A02": 0.0,
+            "A03": 8.0,
+            "A04": -2.0,
+        }
+
+        set_sender_pdr(
+            ac_handle,
+            mac,
+            {
+                "A01": 0.25,
+                "A02": 0.5,
+                "A03": 0.15,
+                "A04": 0.35,
+            },
+        )
+
+    else:
+        # Recovery/change: A03 link improves, A04 degrades.
+        set_agent_headings(
+            sim,
+            {
+                "A01": 180.0,
+                "A02": 180.0,
+                "A03": 135.0,
+                "A04": 270.0,
+            },
+        )
+
+        heading_bias_deg = {
+            "A01": 0.0,
+            "A02": 0.0,
+            "A03": 3.0,
+            "A04": -7.0,
+        }
+
+        set_sender_pdr(
+            ac_handle,
+            mac,
+            {
+                "A01": 0.15,
+                "A02": 0.5,
+                "A03": 0.35,
+                "A04": 0.10,
+            },
+        )
+
+
+    return _last_scenario_phase
+
+
+
 def log_coop_update_debug(nav, coop_update_debug_logs):
     """
     Pull accepted/rejected cooperative EKF update records from nav.coop_update_log
