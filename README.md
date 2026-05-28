@@ -118,7 +118,7 @@ This simulator is also avaiable for ROS2 implementation. The ROS2 impementation 
 
 ## Wiki
 For more details, check out the [Wiki](https://github.com/save-xx/SwarmSwIM/wiki).
-
+https://sw-documentation.readthedocs.io/en/dev-0.4.0/
 ## Cite
 If you found this work useful, please cite us using the following:
 
