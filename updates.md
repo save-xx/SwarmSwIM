@@ -6,6 +6,7 @@
 - Simulator.class is now a dictionary, using agents names as keys (#3)
 - removed Dt from Agent class, now it in inhereted by Simulator (#4)
 - iterator on simulator: the simulator is now iterable, returning the agents contained  as key:value
+- Corrected "local_forces" planar motion to include the effect of Coriolis
 
 ### animation2D
 - legend added (#8)
