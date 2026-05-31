@@ -318,30 +318,52 @@ class Agent():
                 self.pos[1] += step*y_correction/d_correction
 
         elif "local_velocity" == self.planar_control:
-            emulated_velocities = get_emulated_velocities()
-            self.pos[0] += (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
-            self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
+            ROTMAT = np.array([[cospsi,  -sinpsi], [sinpsi, cospsi]])
+            # Add noise from command to actual output
+            noisy_body_velocity = np.array([
+                self.emulate_error(self.cmd_local_vel[0], self.e_local_vel),
+                self.emulate_error(self.cmd_local_vel[1], self.e_local_vel)
+                ])
+            # Transform to global reference frame and apply position update
+            global_reference_velocity = ROTMAT @ noisy_body_velocity
+            self.pos[0] += global_reference_velocity[0] * Dt
+            self.pos[1] += global_reference_velocity[1] * Dt
+            
+            # emulated_velocities = get_emulated_velocities()
+            # self.pos[0] += (emulated_velocities[0] * cospsi + emulated_velocities[1] * sinpsi) * Dt
+            # self.pos[1] += (emulated_velocities[0] * sinpsi - emulated_velocities[1] * cospsi) * Dt
 
         elif "inertial_velocity" == self.planar_control:
+            ROTMAT = np.array([[cospsi,  -sinpsi], [sinpsi, cospsi]])
             step = (self.Dt * self.vel_limit)
-            emulated_velocities = get_emulated_inertial()
-            # current effect in the last step, in body axis
-            current_disturbance = self.pos[0:2] - self.last_step_pos[0:2] 
-            current_disturbance_body = R_mat.transpose() @ current_disturbance
-            # current_disturbance_body[1] *= -1
-            # real tranlation on the plane required by the controller, body frame
-            real_translation = emulated_velocities * self.Dt - current_disturbance_body
-            # thresholding based on velocity limit
-            if abs(real_translation[0]) - step[0] > 0:
-                real_translation[0] = np.copysign(step[0], real_translation[0])
-            if abs(real_translation[1]) - step[1] > 0:
-                real_translation[1] = np.copysign(step[1], real_translation[1])
-            # apply thresholded velocity correction
-            self.pos[0] += (real_translation[0] * cospsi + real_translation[1] * sinpsi)
-            self.pos[1] += (real_translation[0] * sinpsi - real_translation[1] * cospsi)
+            # Add noise from command to actual output 
+            noisy_body_velocity = np.array([
+                self.emulate_error(self.cmd_local_vel[0], self.e_inertial_vel),
+                self.emulate_error(self.cmd_local_vel[1], self.e_inertial_vel)
+                ])
+            
+            # Desired translation in body frame
+            desired_translation_body = noisy_body_velocity * self.Dt
+            
+            # Calculate the displacement of the body due to current alone, in the body ref frame
+            current_disturbance = self.pos[0:2] - self.last_step_pos[0:2]
+            current_disturbance_body = ROTMAT.T @ current_disturbance
+
+            # calculate the necessary real translation to move at the indicated real inertial velocity
+            real_translation_body = desired_translation_body - current_disturbance_body    
+
+            # Apply velocity limit (body frame)
+            real_translation_body[0] = np.clip(real_translation_body[0], -step[0], step[0])
+            real_translation_body[1] = np.clip(real_translation_body[1], -step[1], step[1])
+
+            # Convert back to NED and update position
+            real_translation_ned = ROTMAT @ real_translation_body
+            self.pos[0:2] = self.last_step_pos[0:2] + current_disturbance + real_translation_ned
+
 
         elif "local_forces" == self.planar_control:
-            self._force_dynamics(R_mat)
+            ROTMAT = np.array([[cospsi,  -sinpsi], [sinpsi, cospsi]])
+            self._force_dynamics(ROTMAT)
 
         # Save last step state
         self.last_step_pos = self.pos.copy()
@@ -356,7 +378,6 @@ class Agent():
         u, v = vel_body
         r = np.deg2rad(self.yawrate)    
         M = self.massMatrix
-        M_inv = self.inverseMass
 
         # Total force vector NED-body reference frame.
         thrusters = np.array([
@@ -364,21 +385,22 @@ class Agent():
             self.emulate_error(-self.cmd_forces[1], self.e_local_force)
             ])
         
+        # Damping and Drag forces. (NOTE: damping parameters are defined negative)
         damping_force = (
             self.linear_damping @ vel_body +
             self.quadratic_damping @ (vel_body * np.abs(vel_body))
         )
 
-        force_total = thrusters + self.other_forces + damping_force
-
-        # Coriolis/centripetal vector
-        Coriolis = np.array([
+        # Coriolis/centripetal vector (always assume Added mass simmetric)
+        coriolis = np.array([
             -r * (M[0,1] * u + M[1,1] * v),
              r * (M[0,0] * u + M[0,1] * v)
             ])
-        
+
+        force_total = thrusters + self.other_forces + damping_force - coriolis
+
         # Accelerations in body frame (u_dot, v_dot)
-        acc_vector = M_inv @ (force_total - Coriolis)
+        acc_vector = self.inverseMass @ force_total
         self.incurrent_velocity += acc_vector * self.Dt
         
         # Pose update (semi-implicit Euler)
