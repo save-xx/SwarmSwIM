@@ -11,7 +11,7 @@ PERIOD = 0.05
 # Start a Simulator instance with a 0.05 s period
 S = Simulator(PERIOD)
 # save data in a bag
-save_bag(S)
+# save_bag(S)
 
 # Activate current effects
 activate_Currents(S)
